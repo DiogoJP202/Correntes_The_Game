@@ -1,8 +1,10 @@
 import type {
   Aiko,
+  DialogueChoiceEffect,
   Enemy,
   EnemyType,
   GameState,
+  MemoryInteractableId,
   Particle,
   Vec2,
 } from './types';
@@ -14,9 +16,22 @@ import {
   DIALOGUE_POST_COMBAT_TRUST,
   DIALOGUE_PRE_COMBAT,
   DIALOGUE_TRUST_RESULT,
+  LIA_SIT_TARGET,
+  MEMORY_DIALOGUE_BURDEN,
+  MEMORY_DIALOGUE_LIGHTNESS,
+  MEMORY_DIALOGUE_OPENING,
+  MEMORY_DIALOGUE_VULNERABILITY,
+  MEMORY_BOTTOM,
+  MEMORY_INTERACTABLES,
+  MEMORY_LEFT,
+  MEMORY_OBSTACLES,
+  MEMORY_RIGHT,
+  MEMORY_TOP,
   OBSTACLES,
   WALL_BOTTOM,
   WALL_TOP,
+  createPresentPlayer,
+  createInitialAiko,
 } from './gameData';
 import { addCameraShake } from './CameraShake';
 import { updateDialogueCameraController } from './DialogueCameraController';
@@ -44,6 +59,16 @@ function clamp(v: number, min: number, max: number) {
 
 function lerp(from: number, to: number, amount: number) {
   return from + (to - from) * amount;
+}
+
+function isMemoryPhase(phase: GameState['phase']) {
+  return (
+    phase === 'MEMORY_FADE_IN' ||
+    phase === 'MEMORY_EXPLORE' ||
+    phase === 'MEMORY_APPROACH' ||
+    phase === 'MEMORY_DIALOGUE' ||
+    phase === 'MEMORY_OUTRO'
+  );
 }
 
 function getCastOrigin(pos: Vec2, facing: Vec2, radius: number): Vec2 {
@@ -95,13 +120,20 @@ function resolveCircles(a: Vec2, ra: number, b: Vec2, rb: number): Vec2 | null {
   return null;
 }
 
-function clampToArena(pos: Vec2, r: number) {
+function clampToArena(pos: Vec2, r: number, memory: boolean) {
+  if (memory) {
+    pos.x = clamp(pos.x, MEMORY_LEFT + r, MEMORY_RIGHT - r);
+    pos.y = clamp(pos.y, MEMORY_TOP + r, MEMORY_BOTTOM - r);
+    return;
+  }
+
   pos.x = clamp(pos.x, r + 28, CANVAS_W - r - 28);
   pos.y = clamp(pos.y, WALL_TOP + r, WALL_BOTTOM - r);
 }
 
-function resolveObstacles(pos: Vec2, r: number) {
-  for (const obs of OBSTACLES) {
+function resolveObstacles(pos: Vec2, r: number, memory: boolean) {
+  const obstacles = memory ? MEMORY_OBSTACLES : OBSTACLES;
+  for (const obs of obstacles) {
     const col = circleRectCollision(pos.x, pos.y, r, obs.x, obs.y, obs.w, obs.h);
     if (col.hit) {
       pos.x += col.nx * col.overlap;
@@ -131,6 +163,33 @@ function makeRainDrop(x: number, y: number): Particle {
     size: 1,
     elongation: 2.8 + Math.random() * 1.6,
   };
+}
+
+export function initMemoryParticles(): Particle[] {
+  const motes: Particle[] = [];
+  for (let i = 0; i < 54; i++) {
+    motes.push(makeMemoryDust());
+  }
+  return motes;
+}
+
+function makeMemoryDust() {
+  return {
+    x: randomRange(MEMORY_LEFT - 20, MEMORY_RIGHT + 20),
+    y: randomRange(MEMORY_TOP - 14, MEMORY_BOTTOM + 10),
+    vx: randomRange(-0.12, 0.18),
+    vy: randomRange(-0.06, 0.05),
+    life: 1,
+    maxLife: 1,
+    type: 'dust' as const,
+    color: `rgba(255,${220 + Math.floor(Math.random() * 18)},${180 + Math.floor(Math.random() * 22)},${0.16 + Math.random() * 0.18})`,
+    size: 1.1 + Math.random() * 1.8,
+    glow: 5 + Math.random() * 4,
+  };
+}
+
+function randomRange(min: number, max: number) {
+  return min + Math.random() * (max - min);
 }
 
 function spawnEnemy(gs: GameState, type: EnemyType, x: number, y: number) {
@@ -348,6 +407,156 @@ export function updateAikoState(aiko: Aiko) {
   return prev !== aiko.state;
 }
 
+function setPhase(gs: GameState, phase: GameState['phase'], onPhaseChange?: (phase: GameState['phase']) => void) {
+  gs.phase = phase;
+  gs.phaseTimer = 0;
+  onPhaseChange?.(phase);
+}
+
+function findMemoryTarget(gs: GameState): MemoryInteractableId | 'lia' | null {
+  let best: MemoryInteractableId | 'lia' | null = null;
+  let bestDistance = Infinity;
+
+  const liaDistance = dist(gs.player.pos, gs.lia.pos);
+  if (liaDistance < 72) {
+    best = 'lia';
+    bestDistance = liaDistance;
+  }
+
+  for (const interactable of MEMORY_INTERACTABLES) {
+    const d = Math.hypot(gs.player.pos.x - interactable.x, gs.player.pos.y - interactable.y);
+    if (d < interactable.radius && d < bestDistance) {
+      best = interactable.id;
+      bestDistance = d;
+    }
+  }
+
+  return best;
+}
+
+function getMemoryPrompt(target: MemoryInteractableId | 'lia' | null) {
+  if (target === 'lia') return 'F - Sentar';
+  if (!target) return '';
+  const interactable = MEMORY_INTERACTABLES.find((item) => item.id === target);
+  return interactable ? `F - ${interactable.prompt}` : '';
+}
+
+function pushNarrativeInteraction(gs: GameState, id: MemoryInteractableId) {
+  if (!gs.narrative.rooftopInteractions.includes(id)) {
+    gs.narrative.rooftopInteractions = [...gs.narrative.rooftopInteractions, id];
+  }
+}
+
+export function interactWithMemoryScene(gs: GameState, onPhaseChange: (phase: GameState['phase']) => void) {
+  if (gs.phase !== 'MEMORY_EXPLORE' || gs.memory.inspectLockTimer > 0) return false;
+
+  const target = gs.memory.nearbyTarget;
+  if (!target) return false;
+
+  if (target === 'lia') {
+    gs.memory.inspectLockTimer = 18;
+    gs.memory.thoughtText = '';
+    gs.memory.thoughtTimer = 0;
+    gs.player.vel = { x: 0, y: 0 };
+    gs.player.facing = normalize({ x: gs.lia.pos.x - gs.player.pos.x, y: gs.lia.pos.y - gs.player.pos.y });
+    setPhase(gs, 'MEMORY_APPROACH', onPhaseChange);
+    return true;
+  }
+
+  const interactable = MEMORY_INTERACTABLES.find((item) => item.id === target);
+  if (!interactable) return false;
+
+  gs.memory.thoughtText = interactable.thought;
+  gs.memory.thoughtTimer = 180;
+  gs.memory.inspectLockTimer = 16;
+  gs.player.vel = { x: 0, y: 0 };
+  pushNarrativeInteraction(gs, interactable.id);
+  return true;
+}
+
+function spawnMemoryBond(
+  gs: GameState,
+  style: 'memory-bond' | 'memory-bond-stable' | 'memory-bond-strained' | 'memory-bond-warm' | 'memory-bond-final',
+  maxTimer = 94,
+) {
+  gs.chainEffects.push({
+    id: gs.chainIdCounter++,
+    fromX: gs.player.pos.x + 8,
+    fromY: gs.player.pos.y - 28,
+    toX: gs.lia.pos.x - 6,
+    toY: gs.lia.pos.y - 30,
+    type: 'bond',
+    style,
+    timer: maxTimer,
+    maxTimer,
+  });
+}
+
+export function triggerMemoryBondEffect(gs: GameState, variant: 'first' | 'stable' | 'strained' | 'warm' | 'final') {
+  if (variant === 'first') {
+    gs.narrative.firstThreadWitnessed = true;
+    spawnMemoryBond(gs, 'memory-bond', 102);
+    return;
+  }
+
+  if (variant === 'stable') {
+    gs.narrative.scene1BondVariant = 'stable';
+    spawnMemoryBond(gs, 'memory-bond-stable', 112);
+    return;
+  }
+
+  if (variant === 'strained') {
+    gs.narrative.scene1BondVariant = 'strained';
+    spawnMemoryBond(gs, 'memory-bond-strained', 112);
+    return;
+  }
+
+  if (variant === 'warm') {
+    gs.narrative.scene1BondVariant = 'warm';
+    spawnMemoryBond(gs, 'memory-bond-warm', 112);
+    return;
+  }
+
+  spawnMemoryBond(gs, 'memory-bond-final', 126);
+}
+
+function beginMemoryDialogue(gs: GameState, onPhaseChange: (phase: GameState['phase']) => void) {
+  gs.player.pos.x = lerp(gs.player.pos.x, LIA_SIT_TARGET.x, 0.65);
+  gs.player.pos.y = lerp(gs.player.pos.y, LIA_SIT_TARGET.y, 0.65);
+  gs.player.vel = { x: 0, y: 0 };
+  gs.player.facing = normalize({ x: gs.lia.pos.x - gs.player.pos.x, y: gs.lia.pos.y - gs.player.pos.y });
+  gs.lia.expression = 'neutral';
+  setPhase(gs, 'MEMORY_DIALOGUE', onPhaseChange);
+  startDialogue(gs, MEMORY_DIALOGUE_OPENING);
+}
+
+function transitionMemoryToPresent(gs: GameState, onPhaseChange: (phase: GameState['phase']) => void) {
+  gs.player = createPresentPlayer();
+  gs.aiko = createInitialAiko();
+  gs.enemies = [];
+  gs.chainEffects = [];
+  gs.dialogueActive = false;
+  gs.dialogueQueue = [];
+  gs.dialogueIndex = 0;
+  gs.awaitingChoice = false;
+  gs.hintText = '';
+  gs.hintTimer = 0;
+  gs.choiceTone = null;
+  gs.choiceFlash = 0;
+  gs.memory.thoughtText = '';
+  gs.memory.thoughtTimer = 0;
+  gs.memory.inspectLockTimer = 0;
+  gs.memory.nearbyTarget = null;
+  gs.memory.finalCaptionAlpha = 0;
+  gs.memory.finalCaptionVisible = false;
+  gs.memory.outroTimer = 0;
+  gs.memory.fadeAlpha = 0;
+  gs.particles = initRain();
+  gs.introTimer = 0;
+  gs.phaseTimer = 0;
+  setPhase(gs, 'INTRO', onPhaseChange);
+}
+
 export function updateGameState(
   gs: GameState,
   keys: Set<string>,
@@ -355,6 +564,7 @@ export function updateGameState(
   onGameEnd: (result: import('./types').GameResult) => void,
 ) {
   gs.frameCount++;
+  gs.phaseTimer++;
   updateParticles(gs);
   updateChains(gs);
   updateChoiceFlash(gs);
@@ -364,6 +574,39 @@ export function updateGameState(
   }
 
   switch (gs.phase) {
+    case 'MEMORY_FADE_IN':
+      gs.memory.fadeAlpha = Math.max(0, 1 - gs.phaseTimer / 68);
+      gs.hintText = '';
+      if (gs.phaseTimer > 60) {
+        gs.memory.fadeAlpha = 0;
+        gs.hintText = 'WASD para mover  |  F para observar';
+        gs.hintTimer = 240;
+        setPhase(gs, 'MEMORY_EXPLORE', onPhaseChange);
+      }
+      updateMemoryPresence(gs);
+      break;
+
+    case 'MEMORY_EXPLORE':
+      updatePlayerLocomotion(gs, keys, false);
+      updateMemoryPresence(gs);
+      updateMemoryExplore(gs);
+      break;
+
+    case 'MEMORY_APPROACH':
+      updateMemoryPresence(gs);
+      updateMemoryApproach(gs, onPhaseChange);
+      break;
+
+    case 'MEMORY_DIALOGUE':
+      updateMemoryPresence(gs);
+      updateDialogueActors(gs);
+      break;
+
+    case 'MEMORY_OUTRO':
+      updateMemoryPresence(gs);
+      updateMemoryOutro(gs, onPhaseChange);
+      break;
+
     case 'INTRO':
       gs.introTimer++;
       if (gs.introTimer > 280) {
@@ -437,14 +680,80 @@ export function updateGameState(
   updateDialogueCameraController(gs);
 }
 
+function updateMemoryPresence(gs: GameState) {
+  gs.lia.bobTimer += 0.024;
+  gs.lia.pulseTimer += 0.018;
+  gs.player.castType = null;
+  if (gs.memory.thoughtTimer > 0) gs.memory.thoughtTimer--;
+  if (gs.memory.thoughtTimer <= 0) gs.memory.thoughtText = '';
+  if (gs.memory.inspectLockTimer > 0) gs.memory.inspectLockTimer--;
+}
+
+function updateMemoryExplore(gs: GameState) {
+  gs.memory.nearbyTarget = findMemoryTarget(gs);
+  const prompt = getMemoryPrompt(gs.memory.nearbyTarget);
+  if (prompt) {
+    gs.hintText = prompt;
+    gs.hintTimer = 6;
+  } else if (gs.hintTimer <= 0 && gs.phaseTimer < 160) {
+    gs.hintText = 'WASD para mover  |  F para observar';
+    gs.hintTimer = 10;
+  } else if (!prompt && gs.hintTimer <= 0) {
+    gs.hintText = '';
+  }
+}
+
+function updateMemoryApproach(gs: GameState, onPhaseChange: (phase: GameState['phase']) => void) {
+  gs.player.vel = { x: 0, y: 0 };
+  gs.player.pos.x = lerp(gs.player.pos.x, LIA_SIT_TARGET.x, 0.14);
+  gs.player.pos.y = lerp(gs.player.pos.y, LIA_SIT_TARGET.y, 0.14);
+  gs.player.facing = normalize({ x: gs.lia.pos.x - gs.player.pos.x, y: gs.lia.pos.y - gs.player.pos.y });
+  gs.hintText = '';
+  gs.hintTimer = 0;
+
+  if (dist(gs.player.pos, LIA_SIT_TARGET) < 3.4 || gs.phaseTimer > 42) {
+    beginMemoryDialogue(gs, onPhaseChange);
+  }
+}
+
+function updateMemoryOutro(gs: GameState, onPhaseChange: (phase: GameState['phase']) => void) {
+  gs.player.vel = { x: 0, y: 0 };
+  gs.player.facing = normalize({ x: gs.lia.pos.x - gs.player.pos.x, y: gs.lia.pos.y - gs.player.pos.y });
+  gs.memory.outroTimer++;
+
+  if (gs.memory.outroTimer === 18) {
+    gs.memory.finalCaptionVisible = true;
+    spawnMemoryBond(gs, 'memory-bond-final', 126);
+  }
+
+  if (gs.memory.outroTimer < 66) {
+    gs.memory.finalCaptionAlpha = clamp(gs.memory.outroTimer / 42, 0, 1);
+  } else if (gs.memory.outroTimer > 150) {
+    gs.memory.finalCaptionAlpha = clamp(1 - (gs.memory.outroTimer - 150) / 28, 0, 1);
+  }
+
+  if (gs.memory.outroTimer > 118) {
+    gs.memory.fadeAlpha = clamp((gs.memory.outroTimer - 118) / 42, 0, 1);
+  }
+
+  if (gs.memory.outroTimer > 174) {
+    transitionMemoryToPresent(gs, onPhaseChange);
+  }
+}
+
 function updatePlayerLocomotion(gs: GameState, keys: Set<string>, combat: boolean) {
   const p = gs.player;
+  const memory = isMemoryPhase(gs.phase);
   let dx = 0;
   let dy = 0;
   if (keys.has('w') || keys.has('arrowup')) dy -= 1;
   if (keys.has('s') || keys.has('arrowdown')) dy += 1;
   if (keys.has('a') || keys.has('arrowleft')) dx -= 1;
   if (keys.has('d') || keys.has('arrowright')) dx += 1;
+  if (gs.memory.inspectLockTimer > 0 && gs.phase === 'MEMORY_EXPLORE') {
+    dx = 0;
+    dy = 0;
+  }
 
   if (p.isDodging && combat) {
     p.pos.x += p.dodgeVel.x;
@@ -476,8 +785,8 @@ function updatePlayerLocomotion(gs: GameState, keys: Set<string>, combat: boolea
     p.pos.y += p.vel.y;
   }
 
-  clampToArena(p.pos, p.radius);
-  resolveObstacles(p.pos, p.radius);
+  clampToArena(p.pos, p.radius, memory);
+  resolveObstacles(p.pos, p.radius, memory);
 
   if (combat) {
     for (const enemy of gs.enemies) {
@@ -547,8 +856,8 @@ function updateEnemies(gs: GameState) {
         resolveEnemyHit(gs, enemy);
       }
 
-      clampToArena(enemy.pos, enemy.radius);
-      resolveObstacles(enemy.pos, enemy.radius);
+      clampToArena(enemy.pos, enemy.radius, false);
+      resolveObstacles(enemy.pos, enemy.radius, false);
       continue;
     }
 
@@ -579,8 +888,8 @@ function updateEnemies(gs: GameState) {
 
     enemy.pos.x += enemy.vel.x;
     enemy.pos.y += enemy.vel.y;
-    clampToArena(enemy.pos, enemy.radius);
-    resolveObstacles(enemy.pos, enemy.radius);
+    clampToArena(enemy.pos, enemy.radius, false);
+    resolveObstacles(enemy.pos, enemy.radius, false);
 
     for (const other of gs.enemies) {
       if (other.id === enemy.id || other.aiState === 'dead') continue;
@@ -665,13 +974,15 @@ function updateAikoCombat(gs: GameState) {
   const step = aiko.state === 'dependent' ? 0.1 : aiko.state === 'conscious' ? 0.075 : 0.085;
   aiko.pos.x = lerp(aiko.pos.x, desired.x, step);
   aiko.pos.y = lerp(aiko.pos.y, desired.y, step);
-  clampToArena(aiko.pos, aiko.radius);
-  resolveObstacles(aiko.pos, aiko.radius);
+  clampToArena(aiko.pos, aiko.radius, false);
+  resolveObstacles(aiko.pos, aiko.radius, false);
 }
 
 function updateDialogueActors(gs: GameState) {
   gs.aiko.bobTimer += 0.035;
   gs.aiko.pulseTimer += 0.05;
+  gs.lia.bobTimer += 0.018;
+  gs.lia.pulseTimer += 0.014;
   if (gs.aiko.phraseTimer > 0) gs.aiko.phraseTimer--;
   if (gs.aiko.phraseTimer <= 0) gs.aiko.phrase = null;
   updatePlayerTimers(gs);
@@ -698,6 +1009,20 @@ function updateParticles(gs: GameState) {
       particle.y += particle.vy;
       if (particle.y > CANVAS_H + 10 || particle.x < -20) {
         gs.particles[i] = makeRainDrop(Math.random() * CANVAS_W + 50, -10);
+      }
+      continue;
+    }
+
+    if (particle.type === 'dust') {
+      particle.x += particle.vx + Math.sin(gs.frameCount * 0.01 + particle.y * 0.04) * 0.06;
+      particle.y += particle.vy + Math.cos(gs.frameCount * 0.008 + particle.x * 0.03) * 0.04;
+      if (
+        particle.x < MEMORY_LEFT - 28 ||
+        particle.x > MEMORY_RIGHT + 28 ||
+        particle.y < MEMORY_TOP - 28 ||
+        particle.y > MEMORY_BOTTOM + 20
+      ) {
+        gs.particles[i] = makeMemoryDust();
       }
       continue;
     }
@@ -768,24 +1093,54 @@ export function advanceDialogue(
 
 export function makeChoice(
   gs: GameState,
-  effect: 'trust' | 'dependency',
+  effect: DialogueChoiceEffect,
   onPhaseChange: (p: GameState['phase']) => void,
 ) {
-  gs.chosenPath = effect;
   gs.awaitingChoice = false;
   gs.choiceFlash = 34;
+  gs.dialogueActive = false;
+
+  if (effect === 'memory-vulnerability') {
+    gs.choiceTone = 'trust';
+    gs.narrative.scene1Choice = 'vulnerability';
+    gs.narrative.scene1BondVariant = 'stable';
+    startDialogue(gs, MEMORY_DIALOGUE_VULNERABILITY);
+    gs.lia.expression = 'neutral';
+    spawnMemoryBond(gs, 'memory-bond-stable', 112);
+    return;
+  }
+
+  if (effect === 'memory-burden') {
+    gs.choiceTone = 'dependency';
+    gs.narrative.scene1Choice = 'burden';
+    gs.narrative.scene1BondVariant = 'strained';
+    startDialogue(gs, MEMORY_DIALOGUE_BURDEN);
+    gs.lia.expression = 'serious';
+    spawnMemoryBond(gs, 'memory-bond-strained', 112);
+    return;
+  }
+
+  if (effect === 'memory-lightness') {
+    gs.choiceTone = 'intimacy';
+    gs.narrative.scene1Choice = 'lightness';
+    gs.narrative.scene1BondVariant = 'warm';
+    startDialogue(gs, MEMORY_DIALOGUE_LIGHTNESS);
+    gs.lia.expression = 'soft-smile';
+    spawnMemoryBond(gs, 'memory-bond-warm', 112);
+    return;
+  }
+
+  gs.chosenPath = effect;
   gs.choiceTone = effect;
 
   if (effect === 'trust') {
     gs.aiko.trust = Math.min(100, gs.aiko.trust + 25);
     gs.aiko.autonomy = Math.min(100, gs.aiko.autonomy + 10);
-    gs.dialogueActive = false;
     startDialogue(gs, DIALOGUE_TRUST_RESULT);
-  } else {
+  } else if (effect === 'dependency') {
     gs.aiko.dependency = Math.min(100, gs.aiko.dependency + 30);
     gs.aiko.autonomy = Math.max(0, gs.aiko.autonomy - 20);
     updateAikoState(gs.aiko);
-    gs.dialogueActive = false;
     startDialogue(gs, DIALOGUE_DEPENDENCY_RESULT);
   }
 
@@ -798,7 +1153,14 @@ function handleDialogueEnd(
   onPhaseChange: (p: GameState['phase']) => void,
   onGameEnd: (r: import('./types').GameResult) => void,
 ) {
-  if (gs.phase === 'DIALOGUE') {
+  if (gs.phase === 'MEMORY_DIALOGUE') {
+    gs.narrative.scene1Complete = true;
+    gs.memory.outroTimer = 0;
+    gs.memory.finalCaptionVisible = false;
+    gs.memory.finalCaptionAlpha = 0;
+    gs.memory.fadeAlpha = 0;
+    setPhase(gs, 'MEMORY_OUTRO', onPhaseChange);
+  } else if (gs.phase === 'DIALOGUE') {
     gs.phase = 'PRE_COMBAT';
     onPhaseChange('PRE_COMBAT');
     startDialogue(gs, DIALOGUE_PRE_COMBAT);
@@ -814,6 +1176,7 @@ function handleDialogueEnd(
       autonomy: gs.aiko.autonomy,
       forcedChainCount: gs.player.forcedChainCount,
       chosenPath: gs.chosenPath,
+      narrative: gs.narrative,
     });
   }
 }

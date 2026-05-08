@@ -4,10 +4,12 @@ export type CharacterRole =
   | 'protagonist'
   | 'companion'
   | 'enemy'
+  | 'memory-anchor'
   | 'future-ally';
 
 export type BondType =
   | 'fractured-thread'
+  | 'hearth-thread'
   | 'fear-bound'
   | 'void-corruption'
   | 'impact-fragment'
@@ -71,6 +73,7 @@ export interface CharacterDefinition {
 
 export type CharacterKey =
   | 'ren'
+  | 'lia'
   | 'aiko'
   | 'fallen-common'
   | 'fallen-heavy'
@@ -122,6 +125,54 @@ export const CHARACTER_DEFINITIONS: Record<CharacterKey, CharacterDefinition> = 
       hairShape: 'messy-mid',
       boots: true,
       chainTrim: true,
+      bandages: false,
+      skirtPanels: false,
+      tornHem: false,
+    },
+  },
+  lia: {
+    characterName: 'Lia',
+    role: 'memory-anchor',
+    description: 'Presenca calma do passado, alguem que sabia ficar sem invadir o silencio.',
+    themeColor: '#f0c59f',
+    movementStyle: 'leve, tranquila, presente',
+    personalityTags: ['calma', 'perspicaz', 'afetiva', 'segura'],
+    bondType: 'hearth-thread',
+    futureAbilityName: 'Nenhuma',
+    futureAbilityDescription: 'O vinculo dela existe como memoria fundadora, nao como poder de combate.',
+    outfitStyle: 'roupa casual clara, casaco leve de fim de tarde, silhueta confortavel',
+    hairStyle: 'cabelo castanho escuro medio com caimento suave',
+    visualNotes: 'Paleta quente, postura relaxada, presenca suave e segura no silencio.',
+    palette: {
+      skin: '#ecd3c1',
+      hair: '#5b4037',
+      outfitPrimary: '#c58f72',
+      outfitSecondary: '#efe0cc',
+      accent: '#ffd8b0',
+      glow: '#ffd6a4',
+      eyes: '#fff6ee',
+      shadow: '#4d342d',
+      metal: '#b18b76',
+    },
+    silhouette: {
+      scale: 0.95,
+      shoulderWidth: 12,
+      hipWidth: 10,
+      armLength: 16,
+      legLength: 16,
+      headRadius: 6.1,
+      stanceWidth: 7,
+      torsoHeight: 16,
+      hunch: 0.04,
+      coatLength: 11,
+      hairVolume: 5.2,
+    },
+    costume: {
+      coatShape: 'worn-dress',
+      sleeveShape: 'rolled',
+      hairShape: 'soft-bob',
+      boots: true,
+      chainTrim: false,
       bandages: false,
       skirtPanels: false,
       tornHem: false,

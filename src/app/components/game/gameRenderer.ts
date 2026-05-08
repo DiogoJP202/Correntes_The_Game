@@ -19,6 +19,13 @@ import type { Enemy, GameState, Vec2 } from './types';
 import {
   CANVAS_H,
   CANVAS_W,
+  MEMORY_BOTTOM,
+  MEMORY_CITY_LAYERS,
+  MEMORY_CLOTH_LINES,
+  MEMORY_LEFT,
+  MEMORY_RIGHT,
+  MEMORY_ROOFTOP_PROPS,
+  MEMORY_TOP,
   NEON_LIGHTS,
   OBSTACLES,
   OVERHEAD_WIRES,
@@ -39,26 +46,25 @@ interface EnemyRigEntry {
 export function renderGame(ctx: CanvasRenderingContext2D, gs: GameState) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+  const memory = isMemoryPhase(gs.phase);
 
-  const playerFacing = resolvePlayerLookDirection(
-    gs.player.pos,
-    gs.player.facing,
-    gs.aiko.pos,
-    gs.enemies,
-    gs.phase,
-    gs.dialogueActive,
-  );
-  const aikoFacing = resolveAikoLookDirection(
-    gs.aiko.pos,
-    gs.player.pos,
-    gs.enemies,
-    gs.phase,
-  );
+  const playerFacing = memory
+    ? resolveMemoryPlayerFacing(gs)
+    : resolvePlayerLookDirection(
+        gs.player.pos,
+        gs.player.facing,
+        gs.aiko.pos,
+        gs.enemies,
+        gs.phase,
+        gs.dialogueActive,
+      );
 
   const playerRig = buildCharacterRig(CHARACTER_DEFINITIONS.ren, gs.player.pos, {
     frame: gs.frameCount,
     facing: playerFacing,
     velocity: gs.player.vel,
+    storyBeat: memory ? 'memory' : 'present',
+    poseVariant: gs.phase === 'MEMORY_DIALOGUE' || gs.phase === 'MEMORY_OUTRO' || gs.phase === 'MEMORY_APPROACH' ? 'seated' : 'default',
     isAttacking: gs.player.isAttacking,
     attackType: gs.player.attackType,
     attackTimer: gs.player.attackTimer,
@@ -68,63 +74,94 @@ export function renderGame(ctx: CanvasRenderingContext2D, gs: GameState) {
     seed: 1,
   });
 
-  const aikoPoseVariant = gs.phase === 'EXPLORE' || gs.phase === 'DIALOGUE' || gs.phase === 'PRE_COMBAT'
-    ? 'seated'
-    : 'default';
-  const aikoVelocity = {
-    x: gs.aiko.targetPos.x - gs.aiko.pos.x,
-    y: gs.aiko.targetPos.y - gs.aiko.pos.y,
-  };
-  const aikoRig = buildCharacterRig(CHARACTER_DEFINITIONS.aiko, gs.aiko.pos, {
-    frame: gs.frameCount,
-    facing: aikoFacing,
-    velocity: aikoVelocity,
-    poseVariant: aikoPoseVariant,
-    dependency: gs.aiko.dependency,
-    autonomy: gs.aiko.autonomy,
-    aikoState: gs.aiko.state,
-    seed: 2,
-  });
-
-  const enemyRigs: EnemyRigEntry[] = [];
-  for (const enemy of gs.enemies) {
-    if (enemy.aiState === 'dead' && enemy.deathTimer <= 0) continue;
-    const definition = getEnemyDefinition(enemy.type);
-    const facing = resolveEnemyFacing(enemy, gs.player.pos);
-    const rig = buildCharacterRig(definition, enemy.pos, {
-      frame: gs.frameCount,
-      facing,
-      velocity: enemy.vel,
-      enemyState: enemy.aiState,
-      hitFlash: enemy.hitFlash,
-      seed: enemy.id,
-    });
-    enemyRigs.push({ enemy, rig });
-  }
-
   ctx.save();
   applyCameraTransform(ctx, gs);
-  drawBackdrop(ctx, gs.frameCount);
-  drawSkyline(ctx);
-  drawOverheadWires(ctx, gs.frameCount);
-  drawWallGrime(ctx, gs.frameCount);
-  drawNeons(ctx, gs.frameCount);
-  drawSteamVents(ctx, gs.frameCount);
-  drawWetGround(ctx, gs.frameCount);
-  drawObstacles(ctx);
-  drawStreetProps(ctx);
-  drawBackRain(ctx, gs);
-  drawChainEffects(ctx, gs);
-  drawSceneCharacters(ctx, gs, playerRig, aikoRig, enemyRigs, playerFacing, aikoFacing);
-  drawAttackWake(ctx, gs, playerRig, playerFacing);
-  drawParticles(ctx, gs);
-  drawForegroundMist(ctx, gs.frameCount);
+  if (memory) {
+    const liaFacing = resolveMemoryLiaFacing(gs);
+    const liaRig = buildCharacterRig(CHARACTER_DEFINITIONS.lia, gs.lia.pos, {
+      frame: gs.frameCount,
+      facing: liaFacing,
+      velocity: { x: 0, y: 0 },
+      poseVariant: 'seated',
+      storyBeat: 'memory',
+      expression: gs.lia.expression,
+      seed: 9,
+    });
+
+    drawMemoryBackdrop(ctx, gs.frameCount);
+    drawMemoryCity(ctx, gs.frameCount);
+    drawMemoryRooftop(ctx, gs.frameCount);
+    drawChainEffects(ctx, gs);
+    drawMemoryCharacters(ctx, gs, playerRig, liaRig, playerFacing, liaFacing);
+    drawParticles(ctx, gs);
+    drawMemoryForeground(ctx, gs.frameCount);
+  } else {
+    const aikoFacing = resolveAikoLookDirection(
+      gs.aiko.pos,
+      gs.player.pos,
+      gs.enemies,
+      gs.phase,
+    );
+    const aikoPoseVariant = gs.phase === 'EXPLORE' || gs.phase === 'DIALOGUE' || gs.phase === 'PRE_COMBAT'
+      ? 'seated'
+      : 'default';
+    const aikoVelocity = {
+      x: gs.aiko.targetPos.x - gs.aiko.pos.x,
+      y: gs.aiko.targetPos.y - gs.aiko.pos.y,
+    };
+    const aikoRig = buildCharacterRig(CHARACTER_DEFINITIONS.aiko, gs.aiko.pos, {
+      frame: gs.frameCount,
+      facing: aikoFacing,
+      velocity: aikoVelocity,
+      poseVariant: aikoPoseVariant,
+      dependency: gs.aiko.dependency,
+      autonomy: gs.aiko.autonomy,
+      aikoState: gs.aiko.state,
+      storyBeat: 'present',
+      seed: 2,
+    });
+
+    const enemyRigs: EnemyRigEntry[] = [];
+    for (const enemy of gs.enemies) {
+      if (enemy.aiState === 'dead' && enemy.deathTimer <= 0) continue;
+      const definition = getEnemyDefinition(enemy.type);
+      const facing = resolveEnemyFacing(enemy, gs.player.pos);
+      const rig = buildCharacterRig(definition, enemy.pos, {
+        frame: gs.frameCount,
+        facing,
+        velocity: enemy.vel,
+        enemyState: enemy.aiState,
+        hitFlash: enemy.hitFlash,
+        storyBeat: 'present',
+        seed: enemy.id,
+      });
+      enemyRigs.push({ enemy, rig });
+    }
+
+    drawBackdrop(ctx, gs.frameCount);
+    drawSkyline(ctx);
+    drawOverheadWires(ctx, gs.frameCount);
+    drawWallGrime(ctx, gs.frameCount);
+    drawNeons(ctx, gs.frameCount);
+    drawSteamVents(ctx, gs.frameCount);
+    drawWetGround(ctx, gs.frameCount);
+    drawObstacles(ctx);
+    drawStreetProps(ctx);
+    drawBackRain(ctx, gs);
+    drawChainEffects(ctx, gs);
+    drawSceneCharacters(ctx, gs, playerRig, aikoRig, enemyRigs, playerFacing, aikoFacing);
+    drawAttackWake(ctx, gs, playerRig, playerFacing);
+    drawParticles(ctx, gs);
+    drawForegroundMist(ctx, gs.frameCount);
+  }
   ctx.restore();
 
   drawDialogueSpotlight(ctx, gs);
-  drawEmotionalInstabilityVFX(ctx, gs);
+  if (!memory) {
+    drawEmotionalInstabilityVFX(ctx, gs);
+  }
   drawChoiceFlash(ctx, gs);
-  drawVignette(ctx);
+  drawVignette(ctx, memory);
   drawLetterboxBars(ctx, gs.camera.bars);
 }
 
@@ -132,6 +169,301 @@ function applyCameraTransform(ctx: CanvasRenderingContext2D, gs: GameState) {
   ctx.translate(CANVAS_W * 0.5, CANVAS_H * 0.5);
   ctx.scale(gs.camera.zoom, gs.camera.zoom);
   ctx.translate(-gs.camera.x, -gs.camera.y);
+}
+
+function isMemoryPhase(phase: GameState['phase']) {
+  return (
+    phase === 'MEMORY_FADE_IN' ||
+    phase === 'MEMORY_EXPLORE' ||
+    phase === 'MEMORY_APPROACH' ||
+    phase === 'MEMORY_DIALOGUE' ||
+    phase === 'MEMORY_OUTRO'
+  );
+}
+
+function resolveMemoryPlayerFacing(gs: GameState) {
+  if (gs.phase === 'MEMORY_DIALOGUE' || gs.phase === 'MEMORY_OUTRO' || gs.phase === 'MEMORY_APPROACH') {
+    return normalize({
+      x: gs.lia.pos.x - gs.player.pos.x,
+      y: gs.lia.pos.y - gs.player.pos.y,
+    });
+  }
+  return normalize(gs.player.facing);
+}
+
+function resolveMemoryLiaFacing(gs: GameState) {
+  if (gs.phase === 'MEMORY_DIALOGUE' || gs.phase === 'MEMORY_OUTRO' || gs.phase === 'MEMORY_APPROACH') {
+    return normalize({
+      x: gs.player.pos.x - gs.lia.pos.x,
+      y: gs.player.pos.y - gs.lia.pos.y,
+    });
+  }
+  return normalize({
+    x: 1,
+    y: -0.15,
+  });
+}
+
+function drawMemoryBackdrop(ctx: CanvasRenderingContext2D, frame: number) {
+  const sky = ctx.createLinearGradient(0, 0, 0, MEMORY_TOP + 20);
+  sky.addColorStop(0, '#f7c48f');
+  sky.addColorStop(0.34, '#e6a46f');
+  sky.addColorStop(0.7, '#8a5b67');
+  sky.addColorStop(1, '#483244');
+  ctx.fillStyle = sky;
+  ctx.fillRect(-40, -30, CANVAS_W + 80, MEMORY_TOP + 64);
+
+  const haze = ctx.createRadialGradient(140, 72, 0, 140, 72, 180);
+  haze.addColorStop(0, 'rgba(255, 218, 166, 0.55)');
+  haze.addColorStop(1, 'transparent');
+  ctx.fillStyle = haze;
+  ctx.fillRect(-40, -20, CANVAS_W + 80, 160);
+
+  for (let i = 0; i < 5; i++) {
+    const y = 58 + i * 12;
+    ctx.strokeStyle = `rgba(255, 220, 186, ${0.08 - i * 0.01})`;
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.moveTo(-40, y);
+    ctx.lineTo(CANVAS_W + 40, y + Math.sin(frame * 0.005 + i) * 6);
+    ctx.stroke();
+  }
+}
+
+function drawMemoryCity(ctx: CanvasRenderingContext2D, frame: number) {
+  ctx.save();
+  for (const layer of MEMORY_CITY_LAYERS) {
+    ctx.fillStyle = layer.color;
+    ctx.globalAlpha = layer.alpha;
+    for (const building of layer.buildings) {
+      const y = MEMORY_TOP - building.h + Math.sin(frame * 0.002 + building.x * 0.01) * 1.5;
+      ctx.fillRect(building.x, y, building.w, building.h);
+    }
+  }
+
+  ctx.globalAlpha = 0.42;
+  for (let i = 0; i < 28; i++) {
+    const x = 20 + i * 30;
+    const glow = ctx.createRadialGradient(x, MEMORY_TOP - 16, 0, x, MEMORY_TOP - 16, 16);
+    glow.addColorStop(0, 'rgba(255, 211, 166, 0.18)');
+    glow.addColorStop(1, 'transparent');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(x, MEMORY_TOP - 16, 10, 0, TAU);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawMemoryRooftop(ctx: CanvasRenderingContext2D, frame: number) {
+  const wall = ctx.createLinearGradient(0, MEMORY_TOP, 0, MEMORY_BOTTOM);
+  wall.addColorStop(0, '#8f7e74');
+  wall.addColorStop(0.46, '#7c6e67');
+  wall.addColorStop(1, '#5a514d');
+  ctx.fillStyle = wall;
+  ctx.fillRect(MEMORY_LEFT - 24, MEMORY_TOP, MEMORY_RIGHT - MEMORY_LEFT + 48, MEMORY_BOTTOM - MEMORY_TOP + 20);
+
+  const floor = ctx.createLinearGradient(0, MEMORY_TOP + 60, 0, MEMORY_BOTTOM + 30);
+  floor.addColorStop(0, '#b39b8d');
+  floor.addColorStop(0.55, '#8d7c73');
+  floor.addColorStop(1, '#625a57');
+  ctx.fillStyle = floor;
+  ctx.fillRect(MEMORY_LEFT - 30, MEMORY_TOP + 40, MEMORY_RIGHT - MEMORY_LEFT + 60, MEMORY_BOTTOM - MEMORY_TOP + 50);
+
+  ctx.strokeStyle = 'rgba(255, 242, 224, 0.14)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(MEMORY_LEFT - 12, MEMORY_TOP + 46);
+  ctx.lineTo(MEMORY_RIGHT + 12, MEMORY_TOP + 46);
+  ctx.stroke();
+
+  ctx.strokeStyle = 'rgba(56, 44, 44, 0.52)';
+  ctx.lineWidth = 1.2;
+  for (let i = 0; i < 8; i++) {
+    const crackX = 150 + i * 88;
+    ctx.beginPath();
+    ctx.moveTo(crackX, MEMORY_BOTTOM - 48);
+    ctx.lineTo(crackX + 12, MEMORY_BOTTOM - 40);
+    ctx.lineTo(crackX - 4, MEMORY_BOTTOM - 24);
+    ctx.stroke();
+  }
+
+  drawMemoryRailing(ctx);
+  drawMemoryClothLines(ctx, frame);
+  drawMemoryProps(ctx, frame);
+}
+
+function drawMemoryRailing(ctx: CanvasRenderingContext2D) {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(96, 74, 74, 0.88)';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(606, 270);
+  ctx.lineTo(828, 270);
+  ctx.stroke();
+
+  ctx.lineWidth = 2;
+  for (let x = 614; x <= 822; x += 28) {
+    ctx.beginPath();
+    ctx.moveTo(x, 270);
+    ctx.lineTo(x, 340);
+    ctx.stroke();
+  }
+
+  ctx.strokeStyle = 'rgba(255, 226, 196, 0.1)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(606, 276);
+  ctx.lineTo(828, 276);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawMemoryClothLines(ctx: CanvasRenderingContext2D, frame: number) {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(92, 74, 74, 0.8)';
+  ctx.lineWidth = 1.6;
+  for (const wire of MEMORY_CLOTH_LINES) {
+    ctx.beginPath();
+    ctx.moveTo(wire.x1, wire.y1);
+    const midX = (wire.x1 + wire.x2) * 0.5;
+    const midY = Math.max(wire.y1, wire.y2) + wire.sag + Math.sin(frame * 0.02 + wire.x1 * 0.04) * 2.8;
+    ctx.quadraticCurveTo(midX, midY, wire.x2, wire.y2);
+    ctx.stroke();
+  }
+
+  ctx.fillStyle = 'rgba(214, 175, 145, 0.86)';
+  ctx.fillRect(232, 122, 26, 14);
+  ctx.fillRect(244, 124, 18, 10);
+  ctx.fillStyle = 'rgba(196, 147, 114, 0.72)';
+  ctx.fillRect(534, 118, 30, 16);
+  ctx.restore();
+}
+
+function drawMemoryProps(ctx: CanvasRenderingContext2D, frame: number) {
+  for (const prop of MEMORY_ROOFTOP_PROPS) {
+    ctx.save();
+    ctx.fillStyle = prop.tint;
+    ctx.strokeStyle = 'rgba(248, 232, 220, 0.12)';
+    ctx.lineWidth = 1.2;
+
+    if (prop.kind === 'water-tank') {
+      ctx.fillRect(prop.x, prop.y + 8, prop.w, prop.h - 8);
+      ctx.beginPath();
+      ctx.ellipse(prop.x + prop.w * 0.5, prop.y + 8, prop.w * 0.5, 8, 0, Math.PI, TAU);
+      ctx.fill();
+    } else if (prop.kind === 'stairwell') {
+      ctx.fillRect(prop.x, prop.y, prop.w, prop.h);
+      ctx.fillStyle = 'rgba(214, 195, 182, 0.15)';
+      ctx.fillRect(prop.x + 14, prop.y + 20, 30, 48);
+    } else if (prop.kind === 'chair') {
+      ctx.strokeStyle = prop.tint;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(prop.x + 8, prop.y + 10);
+      ctx.lineTo(prop.x + 8, prop.y + prop.h);
+      ctx.lineTo(prop.x + 22, prop.y + prop.h);
+      ctx.moveTo(prop.x + 22, prop.y + 10);
+      ctx.lineTo(prop.x + 22, prop.y + prop.h);
+      ctx.moveTo(prop.x + 6, prop.y + 10);
+      ctx.lineTo(prop.x + 24, prop.y + 10);
+      ctx.moveTo(prop.x + 6, prop.y + 20);
+      ctx.lineTo(prop.x + 24, prop.y + 20);
+      ctx.stroke();
+    } else if (prop.kind === 'backpack') {
+      ctx.fillRect(prop.x, prop.y + 2, prop.w, prop.h - 2);
+      ctx.beginPath();
+      ctx.ellipse(prop.x + prop.w * 0.5, prop.y + 2, prop.w * 0.5, 4, 0, Math.PI, TAU);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255, 235, 220, 0.14)';
+      ctx.fillRect(prop.x + 6, prop.y + 4, prop.w - 12, 6);
+    } else if (prop.kind === 'bottle') {
+      ctx.fillRect(prop.x + 2, prop.y, prop.w - 4, prop.h - 6);
+      ctx.fillRect(prop.x + 4, prop.y - 6, prop.w - 8, 6);
+      ctx.globalAlpha = 0.28 + Math.sin(frame * 0.08) * 0.06;
+      ctx.fillStyle = '#fff5d7';
+      ctx.fillRect(prop.x + 4, prop.y + 4, 2, prop.h - 12);
+    } else if (prop.kind === 'antenna') {
+      ctx.fillRect(prop.x + 5, prop.y + 10, 4, prop.h - 10);
+      ctx.beginPath();
+      ctx.moveTo(prop.x + 7, prop.y + 12);
+      ctx.lineTo(prop.x - 8, prop.y + 24);
+      ctx.moveTo(prop.x + 7, prop.y + 22);
+      ctx.lineTo(prop.x + 18, prop.y + 38);
+      ctx.stroke();
+    } else {
+      ctx.fillRect(prop.x, prop.y, prop.w, prop.h);
+    }
+
+    if (prop.kind !== 'chair' && prop.kind !== 'antenna') {
+      ctx.strokeRect(prop.x, prop.y, prop.w, prop.h);
+    }
+    ctx.restore();
+  }
+}
+
+function drawMemoryCharacters(
+  ctx: CanvasRenderingContext2D,
+  gs: GameState,
+  playerRig: CharacterRig,
+  liaRig: CharacterRig,
+  playerFacing: Vec2,
+  liaFacing: Vec2,
+) {
+  const drawables: { y: number; draw: () => void }[] = [
+    {
+      y: liaRig.anchors.feet.y,
+      draw: () => {
+        drawCharacterVisual(ctx, CHARACTER_DEFINITIONS.lia, liaRig, {
+          frame: gs.frameCount,
+          facing: liaFacing,
+          velocity: { x: 0, y: 0 },
+          poseVariant: 'seated',
+          storyBeat: 'memory',
+          expression: gs.lia.expression,
+          seed: 9,
+        });
+      },
+    },
+    {
+      y: playerRig.anchors.feet.y,
+      draw: () => {
+        drawCharacterVisual(ctx, CHARACTER_DEFINITIONS.ren, playerRig, {
+          frame: gs.frameCount,
+          facing: playerFacing,
+          velocity: gs.player.vel,
+          poseVariant: gs.phase === 'MEMORY_DIALOGUE' || gs.phase === 'MEMORY_OUTRO' || gs.phase === 'MEMORY_APPROACH' ? 'seated' : 'default',
+          storyBeat: 'memory',
+          expression: 'neutral',
+          seed: 1,
+        });
+      },
+    },
+  ];
+
+  drawables.sort((a, b) => a.y - b.y);
+  for (const drawable of drawables) drawable.draw();
+}
+
+function drawMemoryForeground(ctx: CanvasRenderingContext2D, frame: number) {
+  ctx.save();
+  const glow = ctx.createLinearGradient(0, MEMORY_TOP, 0, MEMORY_BOTTOM);
+  glow.addColorStop(0, 'rgba(255, 198, 136, 0.02)');
+  glow.addColorStop(1, 'rgba(50, 28, 20, 0.16)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, MEMORY_TOP, CANVAS_W, MEMORY_BOTTOM - MEMORY_TOP);
+
+  for (let i = 0; i < 2; i++) {
+    const x = 180 + i * 300 + Math.sin(frame * 0.01 + i) * 18;
+    const gradient = ctx.createRadialGradient(x, 360, 0, x, 360, 120);
+    gradient.addColorStop(0, 'rgba(255, 214, 182, 0.08)');
+    gradient.addColorStop(1, 'transparent');
+    ctx.fillStyle = gradient;
+    ctx.beginPath();
+    ctx.ellipse(x, 360, 120, 34, 0, 0, TAU);
+    ctx.fill();
+  }
+  ctx.restore();
 }
 
 function drawBackdrop(ctx: CanvasRenderingContext2D, frame: number) {
@@ -605,7 +937,7 @@ function drawForegroundMist(ctx: CanvasRenderingContext2D, frame: number) {
 }
 
 function drawDialogueSpotlight(ctx: CanvasRenderingContext2D, gs: GameState) {
-  if (!(gs.dialogueActive || gs.phase === 'PRE_COMBAT' || gs.phase === 'POST_COMBAT')) return;
+  if (!(gs.dialogueActive || gs.phase === 'PRE_COMBAT' || gs.phase === 'POST_COMBAT' || gs.phase === 'MEMORY_OUTRO')) return;
 
   const focus = Math.max(0.22, gs.camera.focusMix * 0.42);
   const gradient = ctx.createRadialGradient(
@@ -629,11 +961,13 @@ function drawChoiceFlash(ctx: CanvasRenderingContext2D, gs: GameState) {
   const alpha = (gs.choiceFlash / 34) * 0.16;
   ctx.fillStyle = gs.choiceTone === 'dependency'
     ? `rgba(120, 22, 34, ${alpha})`
-    : `rgba(24, 68, 126, ${alpha})`;
+    : gs.choiceTone === 'intimacy'
+      ? `rgba(156, 104, 52, ${alpha})`
+      : `rgba(24, 68, 126, ${alpha})`;
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 }
 
-function drawVignette(ctx: CanvasRenderingContext2D) {
+function drawVignette(ctx: CanvasRenderingContext2D, memory: boolean) {
   const gradient = ctx.createRadialGradient(
     CANVAS_W * 0.5,
     CANVAS_H * 0.5,
@@ -643,7 +977,7 @@ function drawVignette(ctx: CanvasRenderingContext2D) {
     420,
   );
   gradient.addColorStop(0, 'rgba(0,0,0,0)');
-  gradient.addColorStop(1, 'rgba(0,0,0,0.46)');
+  gradient.addColorStop(1, memory ? 'rgba(34, 14, 8, 0.28)' : 'rgba(0,0,0,0.46)');
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 }

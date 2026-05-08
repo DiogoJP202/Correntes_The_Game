@@ -192,11 +192,23 @@ export function ConsequenceScreen({ result, onRestart }: Props) {
             <div className="text-[10px] text-gray-600 tracking-widest mb-2">ESCOLHAS</div>
             <div className="text-xs text-gray-500 space-y-1">
               <div>
-                Vinculo inicial:{' '}
+                Escolha com Aiko:{' '}
                 <span className={result.chosenPath === 'trust' ? 'text-blue-400' : 'text-red-400'}>
                   {result.chosenPath === 'trust' ? '"Entao caminha comigo."' : '"Voce precisa de mim."'}
                 </span>
               </div>
+              {result.narrative?.scene1Choice && (
+                <div>
+                  Memoria do terraco:{' '}
+                  <span className="text-amber-200">
+                    {result.narrative.scene1Choice === 'vulnerability'
+                      ? '"Eu so nao quero pesar para ninguem."'
+                      : result.narrative.scene1Choice === 'burden'
+                        ? '"Alguem precisa aguentar."'
+                        : '"Voce fala como se me conhecesse."'}
+                  </span>
+                </div>
+              )}
               <div>
                 Correntes forcadas:{' '}
                 <span

@@ -33,6 +33,14 @@ export function getProceduralMotionProfile(
     hunch += 0.03;
     forwardLean += 0.08;
     armGuard += 1.8;
+    if (motion.storyBeat === 'memory') {
+      hunch -= 0.05;
+      forwardLean -= 0.08;
+      armGuard -= 1.2;
+      breath += 0.16;
+      headTilt += 0.02;
+      coatFlutter *= 0.55;
+    }
     if (motion.castType === 'forced') {
       forwardLean += 0.08;
       coatFlutter += 0.8;
@@ -68,6 +76,31 @@ export function getProceduralMotionProfile(
       armGuard += 3;
       armCross += 3;
       strideBoost -= 2;
+    }
+  }
+
+  if (definition.role === 'memory-anchor') {
+    hunch -= 0.06;
+    forwardLean -= 0.04;
+    armGuard -= 0.8;
+    breath += 0.18;
+    coatFlutter *= 0.42;
+    headTilt += 0.02;
+
+    if (motion.expression === 'soft-smile') {
+      breath += 0.1;
+      headTilt += 0.03;
+    } else if (motion.expression === 'serious') {
+      hunch += 0.03;
+      forwardLean += 0.06;
+      headTilt -= 0.02;
+    }
+
+    if (motion.poseVariant === 'seated') {
+      hunch += 0.04;
+      armGuard += 1.1;
+      armCross += 0.6;
+      strideBoost -= 1.6;
     }
   }
 

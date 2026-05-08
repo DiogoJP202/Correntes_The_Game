@@ -1,4 +1,9 @@
 export type GamePhase =
+  | 'MEMORY_FADE_IN'
+  | 'MEMORY_EXPLORE'
+  | 'MEMORY_APPROACH'
+  | 'MEMORY_DIALOGUE'
+  | 'MEMORY_OUTRO'
   | 'INTRO'
   | 'EXPLORE'
   | 'DIALOGUE'
@@ -11,7 +16,23 @@ export type AikoStateType = 'scared' | 'dependent' | 'unstable' | 'conscious';
 export type EnemyType = 'common' | 'heavy';
 export type EnemyAIState = 'patrol' | 'chase' | 'attack' | 'stunned' | 'dead';
 export type ParticleType = 'rain' | 'hit' | 'aura' | 'spark' | 'dust' | 'ring' | 'mist' | 'stability';
-export type ChoiceTone = 'trust' | 'dependency' | null;
+export type ChoiceTone = 'trust' | 'dependency' | 'intimacy' | null;
+export type DialogueCameraShot = 'wide' | 'duo' | 'lia' | 'ren' | 'sky';
+export type MemoryChoiceKey = 'vulnerability' | 'burden' | 'lightness' | null;
+export type MemoryInteractableId = 'city' | 'chair' | 'backpack' | 'bottle' | 'wires' | 'sky' | 'railing';
+export type DialogueChoiceEffect =
+  | 'trust'
+  | 'dependency'
+  | 'memory-vulnerability'
+  | 'memory-burden'
+  | 'memory-lightness';
+export type BondVisualStyle =
+  | 'combat-bond'
+  | 'memory-bond'
+  | 'memory-bond-stable'
+  | 'memory-bond-strained'
+  | 'memory-bond-warm'
+  | 'memory-bond-final';
 
 export interface Vec2 {
   x: number;
@@ -78,6 +99,16 @@ export interface Aiko {
   pulseTimer: number;
 }
 
+export interface Lia {
+  pos: Vec2;
+  targetPos: Vec2;
+  radius: number;
+  bobTimer: number;
+  pulseTimer: number;
+  seated: boolean;
+  expression: 'neutral' | 'soft-smile' | 'serious';
+}
+
 export interface Enemy {
   id: number;
   pos: Vec2;
@@ -121,6 +152,7 @@ export interface ChainEffect {
   toX: number;
   toY: number;
   type: 'bond' | 'forced';
+  style?: BondVisualStyle;
   timer: number;
   maxTimer: number;
 }
@@ -129,18 +161,42 @@ export interface DialogueLine {
   speaker: string;
   text: string;
   choices?: DialogueChoice[];
+  autoAdvanceMs?: number;
+  cameraShot?: DialogueCameraShot;
 }
 
 export interface DialogueChoice {
   text: string;
-  effect: 'trust' | 'dependency';
+  effect: DialogueChoiceEffect;
   dark?: boolean;
+  tone?: Exclude<ChoiceTone, null>;
+}
+
+export interface NarrativeState {
+  rooftopInteractions: MemoryInteractableId[];
+  firstThreadWitnessed: boolean;
+  scene1Choice: MemoryChoiceKey;
+  scene1BondVariant: 'stable' | 'strained' | 'warm' | null;
+  scene1Complete: boolean;
+}
+
+export interface MemorySceneState {
+  nearbyTarget: MemoryInteractableId | 'lia' | null;
+  thoughtText: string;
+  thoughtTimer: number;
+  inspectLockTimer: number;
+  fadeAlpha: number;
+  outroTimer: number;
+  finalCaptionAlpha: number;
+  finalCaptionVisible: boolean;
 }
 
 export interface GameState {
   phase: GamePhase;
+  phaseTimer: number;
   player: Player;
   aiko: Aiko;
+  lia: Lia;
   enemies: Enemy[];
   particles: Particle[];
   chainEffects: ChainEffect[];
@@ -163,6 +219,8 @@ export interface GameState {
   hintTimer: number;
   combatStarted: boolean;
   postCombatShown: boolean;
+  memory: MemorySceneState;
+  narrative: NarrativeState;
 }
 
 export interface GameResult {
@@ -171,6 +229,7 @@ export interface GameResult {
   autonomy: number;
   forcedChainCount: number;
   chosenPath: 'trust' | 'dependency' | null;
+  narrative?: NarrativeState;
 }
 
 export interface UIState {
@@ -196,4 +255,9 @@ export interface UIState {
   combatWave: number;
   lowStability: boolean;
   choiceTone: ChoiceTone;
+  memoryThought: string;
+  isMemoryScene: boolean;
+  fadeAlpha: number;
+  finalCaptionAlpha: number;
+  finalCaptionVisible: boolean;
 }

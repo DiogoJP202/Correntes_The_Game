@@ -12,6 +12,16 @@ function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
+function isMemoryPhase(phase: GameState['phase']) {
+  return (
+    phase === 'MEMORY_FADE_IN' ||
+    phase === 'MEMORY_EXPLORE' ||
+    phase === 'MEMORY_APPROACH' ||
+    phase === 'MEMORY_DIALOGUE' ||
+    phase === 'MEMORY_OUTRO'
+  );
+}
+
 function nearestEnemyToPlayer(gs: GameState) {
   let best = null as GameState['enemies'][number] | null;
   let bestDist = Infinity;
@@ -37,7 +47,71 @@ export function updateDialogueCameraController(gs: GameState) {
   let bars = 0;
   let focusMix = 0.22;
 
-  if (gs.phase === 'INTRO') {
+  if (gs.phase === 'MEMORY_FADE_IN') {
+    target = { x: 476, y: 262 };
+    zoom = 1.04;
+    bars = 14;
+    focusMix = 0.26;
+  } else if (gs.phase === 'MEMORY_EXPLORE') {
+    target = { x: gs.player.pos.x + 14, y: gs.player.pos.y - 28 };
+    zoom = 1.01;
+    bars = 8;
+    focusMix = 0.16;
+
+    if (gs.memory.nearbyTarget === 'lia') {
+      target = midpoint(gs.player.pos, gs.lia.pos);
+      target.y -= 18;
+      zoom = 1.05;
+      bars = 12;
+      focusMix = 0.3;
+    }
+  } else if (gs.phase === 'MEMORY_APPROACH') {
+    target = midpoint(gs.player.pos, gs.lia.pos);
+    target.y -= 26;
+    zoom = 1.09;
+    bars = 22;
+    focusMix = 0.68;
+  } else if (gs.phase === 'MEMORY_DIALOGUE') {
+    const line = gs.dialogueQueue[gs.dialogueIndex];
+    const duo = midpoint(gs.player.pos, gs.lia.pos);
+    target = { x: duo.x, y: duo.y - 26 };
+    zoom = 1.11;
+    bars = 28;
+    focusMix = 0.78;
+
+    switch (line?.cameraShot) {
+      case 'lia':
+        target.x = easeCameraValue(target.x, gs.lia.pos.x + 22, 0.36);
+        target.y = easeCameraValue(target.y, gs.lia.pos.y - 42, 0.2);
+        zoom = 1.16;
+        break;
+      case 'ren':
+        target.x = easeCameraValue(target.x, gs.player.pos.x - 18, 0.36);
+        target.y = easeCameraValue(target.y, gs.player.pos.y - 44, 0.2);
+        zoom = 1.15;
+        break;
+      case 'sky':
+        target = { x: 520, y: 214 };
+        zoom = 1.05;
+        break;
+      case 'wide':
+        target = { x: duo.x + 8, y: duo.y - 18 };
+        zoom = 1.03;
+        break;
+      default:
+        break;
+    }
+  } else if (gs.phase === 'MEMORY_OUTRO') {
+    const duo = midpoint(gs.player.pos, gs.lia.pos);
+    const outroBlend = clamp(gs.memory.outroTimer / 160, 0, 1);
+    target = {
+      x: easeCameraValue(duo.x, 540, outroBlend * 0.18),
+      y: easeCameraValue(duo.y - 24, 214, outroBlend * 0.18),
+    };
+    zoom = easeCameraValue(1.08, 1.02, outroBlend);
+    bars = 26;
+    focusMix = 0.72;
+  } else if (gs.phase === 'INTRO') {
     target = { x: 420, y: 250 };
     zoom = 1.08;
     bars = 18;
@@ -51,7 +125,8 @@ export function updateDialogueCameraController(gs: GameState) {
     }
   } else if (gs.phase === 'DIALOGUE' || gs.phase === 'PRE_COMBAT' || gs.phase === 'POST_COMBAT') {
     const line = gs.dialogueQueue[gs.dialogueIndex];
-    const duo = midpoint(gs.player.pos, gs.aiko.pos);
+    const partner = isMemoryPhase(gs.phase) ? gs.lia.pos : gs.aiko.pos;
+    const duo = midpoint(gs.player.pos, partner);
     target = { x: duo.x, y: duo.y - 24 };
     zoom = gs.phase === 'POST_COMBAT' ? 1.18 : 1.14;
     bars = 26;

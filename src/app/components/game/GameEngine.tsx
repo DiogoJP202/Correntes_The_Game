@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import type { ChoiceTone, DialogueLine, GamePhase, GameResult, GameState, UIState } from './types';
-import { CANVAS_W, DIALOGUE_AIKO_MEET, createInitialGameState } from './gameData';
+import type { ChoiceTone, DialogueChoiceEffect, DialogueLine, GamePhase, GameResult, GameState, UIState } from './types';
+import { CANVAS_W, DIALOGUE_AIKO_MEET, MEMORY_SCENE_FINAL_CAPTION, createInitialGameState } from './gameData';
 import {
   advanceDialogue,
   fireBondThread,
   fireForcedChain,
-  initRain,
+  initMemoryParticles,
+  interactWithMemoryScene,
   makeChoice,
   playerAttack,
   playerDodge,
   startDialogue,
+  triggerMemoryBondEffect,
   startPostCombatDialogue,
   updateGameState,
 } from './gameSystems';
@@ -24,7 +26,10 @@ import {
   playDialogueBlip,
   playDialogueChoiceSound,
   playDialogueOpenSound,
+  playMemoryBondSound,
+  playMemoryInteractSound,
   primeDialogueAudio,
+  setSceneAmbience,
 } from './DialogueAudio';
 import { DialoguePortrait } from './DialoguePortrait';
 
@@ -34,6 +39,16 @@ interface Props {
 
 const INTRO_TEXT = '"Depois que o ultimo fio se rompeu, Ren aprendeu a temer qualquer laco que pudesse parecer salvacao."';
 
+function isMemoryPhase(phase: GamePhase) {
+  return (
+    phase === 'MEMORY_FADE_IN' ||
+    phase === 'MEMORY_EXPLORE' ||
+    phase === 'MEMORY_APPROACH' ||
+    phase === 'MEMORY_DIALOGUE' ||
+    phase === 'MEMORY_OUTRO'
+  );
+}
+
 export function GameEngine({ onGameEnd }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gsRef = useRef<GameState>(createInitialGameState());
@@ -42,9 +57,10 @@ export function GameEngine({ onGameEnd }: Props) {
   const onPhaseChangeRef = useRef<((p: GamePhase) => void) | null>(null);
   const onGameEndRef = useRef<((r: GameResult) => void) | null>(null);
   const dialogueKeyBlockRef = useRef(false);
+  const memoryCueRef = useRef('');
 
   const [uiState, setUIState] = useState<UIState>({
-    phase: 'INTRO',
+    phase: 'MEMORY_FADE_IN',
     playerHp: 100,
     playerMaxHp: 100,
     playerEnergy: 100,
@@ -62,10 +78,15 @@ export function GameEngine({ onGameEnd }: Props) {
     dialogueLine: null,
     awaitingChoice: false,
     aikoPhrase: null,
-    introVisible: true,
+    introVisible: false,
     combatWave: 0,
     lowStability: false,
     choiceTone: null,
+    memoryThought: '',
+    isMemoryScene: true,
+    fadeAlpha: 1,
+    finalCaptionAlpha: 0,
+    finalCaptionVisible: false,
   });
 
   const [introTyped, setIntroTyped] = useState('');
@@ -102,6 +123,11 @@ export function GameEngine({ onGameEnd }: Props) {
       combatWave: gs.combatWave,
       lowStability: player.stability < 35,
       choiceTone: gs.choiceTone,
+      memoryThought: gs.memory.thoughtText,
+      isMemoryScene: isMemoryPhase(gs.phase),
+      fadeAlpha: gs.memory.fadeAlpha,
+      finalCaptionAlpha: gs.memory.finalCaptionAlpha,
+      finalCaptionVisible: gs.memory.finalCaptionVisible,
     });
   }, []);
 
@@ -111,6 +137,11 @@ export function GameEngine({ onGameEnd }: Props) {
     if (phase === 'COMBAT') {
       setWaveText('Caidos surgem');
       setTimeout(() => setWaveText(''), 1800);
+    }
+
+    if (phase === 'INTRO') {
+      setIntroTyped('');
+      setIntroReady(false);
     }
 
     if (phase === 'POST_COMBAT' && !gs.postCombatShown) {
@@ -126,12 +157,16 @@ export function GameEngine({ onGameEnd }: Props) {
 
   onPhaseChangeRef.current = handlePhaseChange;
 
-  const handleAdvanceDialogue = useCallback(() => {
+  const handleAdvanceDialogue = useCallback((options?: { silent?: boolean; ignoreAuto?: boolean }) => {
     if (dialogueKeyBlockRef.current) return;
     const gs = gsRef.current;
     if (!gs.dialogueActive || gs.awaitingChoice) return;
+    const current = gs.dialogueQueue[gs.dialogueIndex];
+    if (current?.autoAdvanceMs && !options?.ignoreAuto) return;
 
-    playDialogueAdvanceSound();
+    if (!options?.silent) {
+      playDialogueAdvanceSound();
+    }
     dialogueKeyBlockRef.current = true;
     setTimeout(() => {
       dialogueKeyBlockRef.current = false;
@@ -141,9 +176,13 @@ export function GameEngine({ onGameEnd }: Props) {
     syncUI(gs);
   }, [syncUI]);
 
-  const handleChoice = useCallback((effect: 'trust' | 'dependency') => {
+  const handleChoice = useCallback((effect: DialogueChoiceEffect) => {
     const gs = gsRef.current;
-    playDialogueChoiceSound(effect);
+    const tone =
+      effect === 'memory-lightness' ? 'intimacy' :
+      effect === 'trust' || effect === 'memory-vulnerability' ? 'trust' :
+      'dependency';
+    playDialogueChoiceSound(tone);
     makeChoice(gs, effect, (p) => onPhaseChangeRef.current?.(p));
     syncUI(gs);
   }, [syncUI]);
@@ -174,13 +213,77 @@ export function GameEngine({ onGameEnd }: Props) {
   }, [uiState.combatWave, uiState.phase]);
 
   useEffect(() => {
+    if (uiState.phase === 'MEMORY_EXPLORE' || uiState.phase === 'MEMORY_APPROACH') {
+      setSceneAmbience('memory-explore');
+    } else if (uiState.phase === 'MEMORY_DIALOGUE' || uiState.phase === 'MEMORY_OUTRO') {
+      setSceneAmbience('memory-dialogue');
+    } else {
+      setSceneAmbience('none');
+    }
+  }, [uiState.phase]);
+
+  useEffect(() => {
+    const gs = gsRef.current;
+    if (gs.phase !== 'MEMORY_DIALOGUE' || !gs.dialogueActive) return;
+
+    const line = gs.dialogueQueue[gs.dialogueIndex];
+    if (!line) return;
+
+    const cueKey = `${gs.phase}:${gs.dialogueIndex}:${line.speaker}:${line.text}`;
+    if (memoryCueRef.current === cueKey) return;
+    memoryCueRef.current = cueKey;
+
+    const revealDelay = Math.min(1200, Math.max(460, line.text.length * 18 + 120));
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    if (line.text === 'Se for de verdade... ja esta durando.') {
+      timer = setTimeout(() => {
+        triggerMemoryBondEffect(gs, 'first');
+        playMemoryBondSound('first');
+        syncUI(gs);
+      }, revealDelay);
+    } else if (line.text === 'Nem que seja so o silencio.') {
+      timer = setTimeout(() => {
+        triggerMemoryBondEffect(gs, 'stable');
+        playMemoryBondSound('stable');
+        syncUI(gs);
+      }, revealDelay);
+    } else if (line.text === 'So cuidado para nao confundir forca com prisao.') {
+      timer = setTimeout(() => {
+        triggerMemoryBondEffect(gs, 'strained');
+        playMemoryBondSound('strained');
+        syncUI(gs);
+      }, revealDelay);
+    } else if (line.text === 'Eu conheco o suficiente para ficar.') {
+      timer = setTimeout(() => {
+        triggerMemoryBondEffect(gs, 'warm');
+        playMemoryBondSound('warm');
+        syncUI(gs);
+      }, revealDelay);
+    }
+
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [uiState.dialogueLine, uiState.phase, syncUI]);
+
+  useEffect(() => {
+    const gs = gsRef.current;
+    if (gs.phase === 'MEMORY_OUTRO' && gs.memory.finalCaptionVisible && memoryCueRef.current !== 'memory-final') {
+      memoryCueRef.current = 'memory-final';
+      playMemoryBondSound('final');
+      syncUI(gs);
+    }
+  }, [uiState.finalCaptionVisible, uiState.phase, syncUI]);
+
+  useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
     const gs = gsRef.current;
-    gs.particles = initRain();
+    gs.particles = initMemoryParticles();
 
     let frame = 0;
     const gameLoop = () => {
@@ -222,6 +325,15 @@ export function GameEngine({ onGameEnd }: Props) {
           handleAdvanceDialogue();
           return;
         }
+      }
+
+      if (gs.phase === 'MEMORY_EXPLORE' && key === 'f') {
+        const interacted = interactWithMemoryScene(gs, (p) => onPhaseChangeRef.current?.(p));
+        if (interacted) {
+          playMemoryInteractSound();
+          syncUI(gs);
+        }
+        return;
       }
 
       if (gs.phase === 'EXPLORE' && key === 'f' && gs.nearAiko) {
@@ -348,8 +460,12 @@ export function GameEngine({ onGameEnd }: Props) {
           </>
         )}
 
-        {uiState.hintText && !uiState.dialogueActive && (uiState.phase === 'EXPLORE' || uiState.phase === 'COMBAT') && (
-          <HintPanel text={uiState.hintText} lowStability={uiState.lowStability} />
+        {uiState.hintText && !uiState.dialogueActive && (uiState.phase === 'EXPLORE' || uiState.phase === 'COMBAT' || uiState.isMemoryScene) && (
+          <HintPanel text={uiState.hintText} lowStability={uiState.lowStability} memoryTone={uiState.isMemoryScene} />
+        )}
+
+        {uiState.memoryThought && uiState.isMemoryScene && (
+          <MemoryThought text={uiState.memoryThought} />
         )}
 
         {uiState.phase === 'COMBAT' && uiState.combatWave > 0 && (
@@ -388,23 +504,85 @@ export function GameEngine({ onGameEnd }: Props) {
             choiceTone={uiState.choiceTone}
           />
         )}
+
+        {uiState.finalCaptionVisible && (
+          <div
+            className="absolute inset-0 flex items-center justify-center pointer-events-none px-16"
+            style={{ opacity: uiState.finalCaptionAlpha, transition: 'opacity 600ms ease' }}
+          >
+            <div
+              className="text-center text-[20px] text-amber-50/90 leading-relaxed"
+              style={{
+                fontFamily: 'Georgia, serif',
+                fontStyle: 'italic',
+                textShadow: '0 0 28px rgba(255,223,196,0.22)',
+              }}
+            >
+              {MEMORY_SCENE_FINAL_CAPTION}
+            </div>
+          </div>
+        )}
+
+        {uiState.fadeAlpha > 0.001 && (
+          <div
+            className="absolute inset-0 pointer-events-none"
+            style={{
+              opacity: uiState.fadeAlpha,
+              background: 'linear-gradient(180deg, rgba(8,6,8,1) 0%, rgba(18,12,10,1) 100%)',
+              transition: 'opacity 120ms linear',
+            }}
+          />
+        )}
       </div>
     </div>
   );
 }
 
-function HintPanel({ text, lowStability }: { text: string; lowStability: boolean }) {
+function HintPanel({ text, lowStability, memoryTone }: { text: string; lowStability: boolean; memoryTone?: boolean }) {
   return (
     <div className="absolute bottom-24 left-0 right-0 flex justify-center pointer-events-none">
       <div
         className="border px-4 py-2 text-[10px] tracking-[0.28em]"
         style={{
-          borderColor: lowStability ? 'rgba(251, 113, 133, 0.35)' : 'rgba(59, 130, 246, 0.22)',
-          color: lowStability ? 'rgba(253, 164, 175, 0.88)' : 'rgba(191, 219, 254, 0.82)',
-          background: lowStability ? 'rgba(40, 8, 16, 0.42)' : 'rgba(8, 16, 30, 0.46)',
-          boxShadow: lowStability
-            ? '0 0 18px rgba(244, 63, 94, 0.08)'
-            : '0 0 18px rgba(59, 130, 246, 0.06)',
+          borderColor: memoryTone
+            ? 'rgba(255, 214, 182, 0.28)'
+            : lowStability
+              ? 'rgba(251, 113, 133, 0.35)'
+              : 'rgba(59, 130, 246, 0.22)',
+          color: memoryTone
+            ? 'rgba(255, 234, 214, 0.9)'
+            : lowStability
+              ? 'rgba(253, 164, 175, 0.88)'
+              : 'rgba(191, 219, 254, 0.82)',
+          background: memoryTone
+            ? 'rgba(58, 32, 20, 0.34)'
+            : lowStability
+              ? 'rgba(40, 8, 16, 0.42)'
+              : 'rgba(8, 16, 30, 0.46)',
+          boxShadow: memoryTone
+            ? '0 0 22px rgba(255, 190, 132, 0.08)'
+            : lowStability
+              ? '0 0 18px rgba(244, 63, 94, 0.08)'
+              : '0 0 18px rgba(59, 130, 246, 0.06)',
+        }}
+      >
+        {text}
+      </div>
+    </div>
+  );
+}
+
+function MemoryThought({ text }: { text: string }) {
+  return (
+    <div className="absolute left-0 right-0 flex justify-center pointer-events-none px-10" style={{ bottom: 136 }}>
+      <div
+        className="max-w-xl text-center text-[15px] text-amber-50/84 italic leading-relaxed px-5 py-3 border"
+        style={{
+          fontFamily: 'Georgia, serif',
+          borderColor: 'rgba(255,220,192,0.18)',
+          background: 'rgba(50,28,20,0.22)',
+          boxShadow: '0 0 24px rgba(255,198,156,0.05)',
+          textShadow: '0 0 18px rgba(255,228,198,0.12)',
         }}
       >
         {text}
@@ -475,8 +653,8 @@ function DialogueBox({
   choiceTone,
 }: {
   line: DialogueLine;
-  onAdvance: () => void;
-  onChoice: (e: 'trust' | 'dependency') => void;
+  onAdvance: (options?: { silent?: boolean; ignoreAuto?: boolean }) => void;
+  onChoice: (e: DialogueChoiceEffect) => void;
   awaitingChoice: boolean;
   choiceTone: ChoiceTone;
 }) {
@@ -484,9 +662,11 @@ function DialogueBox({
   const tone = getDialogueVisualTone(line);
   const isNarration = tone === 'narration';
   const isSystem = tone === 'system';
+  const isAutoLine = !awaitingChoice && typeof line.autoAdvanceMs === 'number';
   const portraitSpeaker = line.speaker || (isSystem ? 'Sistema' : 'Narracao');
   const badgeColor =
     tone === 'aiko' ? 'border-rose-400/40 text-rose-200' :
+    tone === 'lia' ? 'border-amber-300/45 text-amber-100' :
     tone === 'ren' ? 'border-blue-400/40 text-blue-200' :
     'border-amber-200/30 text-amber-100/80';
 
@@ -499,6 +679,7 @@ function DialogueBox({
 
     let i = 0;
     setTypedText('');
+    let autoTimer: ReturnType<typeof setTimeout> | null = null;
     const interval = setInterval(() => {
       i++;
       const nextText = line.text.slice(0, i);
@@ -509,11 +690,17 @@ function DialogueBox({
       }
       if (i >= line.text.length) {
         clearInterval(interval);
+        if (line.autoAdvanceMs) {
+          autoTimer = setTimeout(() => onAdvance({ silent: true, ignoreAuto: true }), line.autoAdvanceMs);
+        }
       }
     }, isNarration ? 24 : 18);
 
-    return () => clearInterval(interval);
-  }, [awaitingChoice, isNarration, line.text]);
+    return () => {
+      clearInterval(interval);
+      if (autoTimer) clearTimeout(autoTimer);
+    };
+  }, [awaitingChoice, isNarration, line.autoAdvanceMs, line.speaker, line.text, onAdvance]);
 
   return (
     <div className="absolute bottom-0 left-0 right-0">
@@ -542,11 +729,11 @@ function DialogueBox({
           </div>
 
           <div className="flex-1">
-            <div className={`text-[10px] tracking-[0.35em] mb-1 ${tone === 'aiko' ? 'text-rose-200' : tone === 'ren' ? 'text-blue-200' : 'text-amber-100/80'}`}>
+            <div className={`text-[10px] tracking-[0.35em] mb-1 ${tone === 'aiko' ? 'text-rose-200' : tone === 'lia' ? 'text-amber-100' : tone === 'ren' ? 'text-blue-200' : 'text-amber-100/80'}`}>
               {portraitSpeaker.toUpperCase()}
             </div>
             <div className="text-[9px] text-slate-500 tracking-[0.2em] mb-3">
-              {tone === 'aiko' ? 'presenca fragil' : tone === 'ren' ? 'voz contida' : isSystem ? 'eco do sistema' : 'narracao interna'}
+              {tone === 'aiko' ? 'presenca fragil' : tone === 'lia' ? 'presenca escolhida' : tone === 'ren' ? 'voz contida' : isSystem ? 'eco do sistema' : 'narracao interna'}
             </div>
 
             {!awaitingChoice && (
@@ -572,17 +759,30 @@ function DialogueBox({
                       key={choice.text}
                       onClick={() => onChoice(choice.effect)}
                       className={`block w-full text-left px-4 py-3 border transition-all duration-200 ${
-                        choice.dark
-                          ? 'border-rose-700/35 text-rose-100 hover:border-rose-500/60 hover:bg-rose-950/26'
-                          : 'border-blue-700/30 text-blue-100 hover:border-blue-400/60 hover:bg-blue-950/24'
+                        choice.effect === 'memory-lightness'
+                          ? 'border-amber-500/30 text-amber-50 hover:border-amber-300/55 hover:bg-amber-950/18'
+                          : choice.dark
+                            ? 'border-rose-700/35 text-rose-100 hover:border-rose-500/60 hover:bg-rose-950/26'
+                            : 'border-blue-700/30 text-blue-100 hover:border-blue-400/60 hover:bg-blue-950/24'
                       }`}
                       style={{
-                        background: choice.dark ? 'rgba(40, 8, 16, 0.3)' : 'rgba(10, 20, 42, 0.3)',
+                        background:
+                          choice.effect === 'memory-lightness'
+                            ? 'rgba(54, 28, 14, 0.28)'
+                            : choice.dark
+                              ? 'rgba(40, 8, 16, 0.3)'
+                              : 'rgba(10, 20, 42, 0.3)',
                       }}
                     >
                       <div className="flex items-center justify-between gap-4">
                         <span className="tracking-[0.05em]">{choice.text}</span>
-                        <span className={`text-[10px] uppercase tracking-[0.28em] ${choice.dark ? 'text-rose-300/70' : 'text-blue-300/70'}`}>
+                        <span className={`text-[10px] uppercase tracking-[0.28em] ${
+                          choice.effect === 'memory-lightness'
+                            ? 'text-amber-200/80'
+                            : choice.dark
+                              ? 'text-rose-300/70'
+                              : 'text-blue-300/70'
+                        }`}>
                           {getChoiceToneLabel(choice)}
                         </span>
                       </div>
@@ -592,9 +792,9 @@ function DialogueBox({
               </div>
             )}
 
-            {!awaitingChoice && (
+            {!awaitingChoice && !isAutoLine && (
               <button
-                onClick={onAdvance}
+                onClick={() => onAdvance()}
                 className="text-[10px] text-slate-500 tracking-[0.35em] hover:text-slate-300 transition-colors"
               >
                 ENTER / E / CLIQUE PARA CONTINUAR

@@ -1,4 +1,6 @@
-type DialogueSpeaker = 'Ren' | 'Aiko' | 'Narration' | 'System';
+type DialogueSpeaker = 'Ren' | 'Lia' | 'Aiko' | 'Narration' | 'System';
+type SceneAmbienceMode = 'none' | 'memory-explore' | 'memory-dialogue';
+type MemoryBondSound = 'first' | 'stable' | 'strained' | 'warm' | 'final';
 
 interface VoiceConfig {
   wave: OscillatorType;
@@ -22,11 +24,39 @@ interface VoiceConfig {
   detune?: number;
 }
 
+interface ToneOptions {
+  frequency: number;
+  duration: number;
+  wave: OscillatorType;
+  volume: number;
+  filterFrequency: number;
+  whenOffset?: number;
+  glideTo?: number;
+  attack?: number;
+  release?: number;
+  highpassFrequency?: number;
+  vibratoRate?: number;
+  vibratoDepth?: number;
+  detune?: number;
+}
+
+interface AmbientRack {
+  windGain: GainNode;
+  cityGain: GainNode;
+  padGain: GainNode;
+  shimmerGain: GainNode;
+}
+
 let audioContext: AudioContext | null = null;
 let masterGain: GainNode | null = null;
-let noiseBuffer: AudioBuffer | null = null;
+let burstNoiseBuffer: AudioBuffer | null = null;
+let loopNoiseBuffer: AudioBuffer | null = null;
+let ambientRack: AmbientRack | null = null;
+let activeAmbience: SceneAmbienceMode = 'none';
+
 const lastBlipAt: Record<DialogueSpeaker, number> = {
   Ren: 0,
+  Lia: 0,
   Aiko: 0,
   Narration: 0,
   System: 0,
@@ -47,8 +77,52 @@ function getAudioContext() {
   return audioContext;
 }
 
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function randomRange(min: number, max: number) {
+  return min + Math.random() * (max - min);
+}
+
+function ramp(param: AudioParam, value: number, timeOffset = 0.35) {
+  const ctx = getAudioContext();
+  if (!ctx || ctx.state !== 'running') return;
+  const start = ctx.currentTime;
+  param.cancelScheduledValues(start);
+  param.setValueAtTime(Math.max(0.0001, param.value), start);
+  param.exponentialRampToValueAtTime(Math.max(0.0001, value), start + timeOffset);
+}
+
+function getBurstNoiseBuffer(ctx: AudioContext) {
+  if (burstNoiseBuffer) return burstNoiseBuffer;
+
+  const buffer = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.6), ctx.sampleRate);
+  const channel = buffer.getChannelData(0);
+  for (let i = 0; i < channel.length; i++) {
+    channel[i] = randomRange(-1, 1) * (1 - i / channel.length);
+  }
+
+  burstNoiseBuffer = buffer;
+  return buffer;
+}
+
+function getLoopNoiseBuffer(ctx: AudioContext) {
+  if (loopNoiseBuffer) return loopNoiseBuffer;
+
+  const buffer = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate);
+  const channel = buffer.getChannelData(0);
+  for (let i = 0; i < channel.length; i++) {
+    channel[i] = randomRange(-1, 1) * 0.42;
+  }
+
+  loopNoiseBuffer = buffer;
+  return buffer;
+}
+
 function speakerFromLabel(label: string): DialogueSpeaker {
   if (label === 'Ren') return 'Ren';
+  if (label === 'Lia') return 'Lia';
   if (label === 'Aiko') return 'Aiko';
   if (!label) return 'Narration';
   return 'System';
@@ -73,6 +147,26 @@ function getVoiceConfig(speaker: DialogueSpeaker): VoiceConfig {
         harmonic: 0.5,
         harmonicVolume: 0.34,
         detune: -5,
+      };
+    case 'Lia':
+      return {
+        wave: 'triangle',
+        secondaryWave: 'sine',
+        frequency: 286,
+        spread: 16,
+        duration: 0.064,
+        volume: 0.021,
+        filter: 1680,
+        highpass: 180,
+        attack: 0.008,
+        release: 0.06,
+        cadence: 0.048,
+        glideMultiplier: 1.03,
+        vibratoRate: 4.6,
+        vibratoDepth: 2.2,
+        harmonic: 1.5,
+        harmonicVolume: 0.18,
+        detune: 2,
       };
     case 'Aiko':
       return {
@@ -142,37 +236,76 @@ function getVoiceConfig(speaker: DialogueSpeaker): VoiceConfig {
   }
 }
 
-function randomRange(min: number, max: number) {
-  return min + Math.random() * (max - min);
-}
+function ensureAmbientRack(ctx: AudioContext) {
+  if (ambientRack || !masterGain) return ambientRack;
 
-function getNoiseBuffer(ctx: AudioContext) {
-  if (noiseBuffer) return noiseBuffer;
+  const windSource = ctx.createBufferSource();
+  windSource.buffer = getLoopNoiseBuffer(ctx);
+  windSource.loop = true;
+  const windBand = ctx.createBiquadFilter();
+  windBand.type = 'bandpass';
+  windBand.frequency.value = 620;
+  windBand.Q.value = 0.6;
+  const windLow = ctx.createBiquadFilter();
+  windLow.type = 'lowpass';
+  windLow.frequency.value = 1800;
+  const windGain = ctx.createGain();
+  windGain.gain.value = 0.0001;
+  windSource.connect(windBand);
+  windBand.connect(windLow);
+  windLow.connect(windGain);
+  windGain.connect(masterGain);
+  windSource.start();
 
-  const buffer = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.6), ctx.sampleRate);
-  const channel = buffer.getChannelData(0);
-  for (let i = 0; i < channel.length; i++) {
-    channel[i] = randomRange(-1, 1) * (1 - i / channel.length);
-  }
+  const cityOsc = ctx.createOscillator();
+  cityOsc.type = 'sawtooth';
+  cityOsc.frequency.value = 58;
+  const cityOsc2 = ctx.createOscillator();
+  cityOsc2.type = 'triangle';
+  cityOsc2.frequency.value = 116;
+  const cityFilter = ctx.createBiquadFilter();
+  cityFilter.type = 'lowpass';
+  cityFilter.frequency.value = 380;
+  const cityGain = ctx.createGain();
+  cityGain.gain.value = 0.0001;
+  cityOsc.connect(cityFilter);
+  cityOsc2.connect(cityFilter);
+  cityFilter.connect(cityGain);
+  cityGain.connect(masterGain);
+  cityOsc.start();
+  cityOsc2.start();
 
-  noiseBuffer = buffer;
-  return buffer;
-}
+  const padOsc = ctx.createOscillator();
+  padOsc.type = 'triangle';
+  padOsc.frequency.value = 214;
+  const padFilter = ctx.createBiquadFilter();
+  padFilter.type = 'lowpass';
+  padFilter.frequency.value = 1200;
+  const padGain = ctx.createGain();
+  padGain.gain.value = 0.0001;
+  padOsc.connect(padFilter);
+  padFilter.connect(padGain);
+  padGain.connect(masterGain);
+  padOsc.start();
 
-interface ToneOptions {
-  frequency: number;
-  duration: number;
-  wave: OscillatorType;
-  volume: number;
-  filterFrequency: number;
-  whenOffset?: number;
-  glideTo?: number;
-  attack?: number;
-  release?: number;
-  highpassFrequency?: number;
-  vibratoRate?: number;
-  vibratoDepth?: number;
-  detune?: number;
+  const shimmerOsc = ctx.createOscillator();
+  shimmerOsc.type = 'sine';
+  shimmerOsc.frequency.value = 482;
+  const shimmerGain = ctx.createGain();
+  shimmerGain.gain.value = 0.0001;
+  const shimmerLfo = ctx.createOscillator();
+  const shimmerLfoGain = ctx.createGain();
+  shimmerLfo.frequency.value = 0.18;
+  shimmerLfoGain.gain.value = 34;
+  shimmerLfo.connect(shimmerLfoGain);
+  shimmerLfoGain.connect(shimmerOsc.frequency);
+  shimmerOsc.connect(shimmerGain);
+  shimmerGain.connect(masterGain);
+  shimmerOsc.start();
+  shimmerLfo.start();
+
+  ambientRack = { windGain, cityGain, padGain, shimmerGain };
+  return ambientRack;
 }
 
 function playTone({
@@ -253,7 +386,7 @@ function playNoiseBurst(
   const highpass = ctx.createBiquadFilter();
   const lowpass = ctx.createBiquadFilter();
 
-  source.buffer = getNoiseBuffer(ctx);
+  source.buffer = getBurstNoiseBuffer(ctx);
 
   highpass.type = 'highpass';
   highpass.frequency.setValueAtTime(highpassFrequency, startAt);
@@ -325,6 +458,73 @@ export async function primeDialogueAudio() {
   if (ctx.state === 'suspended') {
     await ctx.resume();
   }
+  ensureAmbientRack(ctx);
+}
+
+export function setSceneAmbience(mode: SceneAmbienceMode) {
+  const ctx = getAudioContext();
+  if (!ctx || ctx.state !== 'running') return;
+  const rack = ensureAmbientRack(ctx);
+  if (!rack || activeAmbience === mode) return;
+  activeAmbience = mode;
+
+  if (mode === 'memory-explore') {
+    ramp(rack.windGain.gain, 0.018, 0.8);
+    ramp(rack.cityGain.gain, 0.011, 0.8);
+    ramp(rack.padGain.gain, 0.0075, 1);
+    ramp(rack.shimmerGain.gain, 0.0024, 1.2);
+    return;
+  }
+
+  if (mode === 'memory-dialogue') {
+    ramp(rack.windGain.gain, 0.013, 0.8);
+    ramp(rack.cityGain.gain, 0.006, 0.8);
+    ramp(rack.padGain.gain, 0.0092, 1);
+    ramp(rack.shimmerGain.gain, 0.0032, 1.2);
+    return;
+  }
+
+  ramp(rack.windGain.gain, 0.0001, 0.8);
+  ramp(rack.cityGain.gain, 0.0001, 0.8);
+  ramp(rack.padGain.gain, 0.0001, 1);
+  ramp(rack.shimmerGain.gain, 0.0001, 1);
+}
+
+export function playMemoryInteractSound() {
+  playTone({ frequency: 306, duration: 0.07, wave: 'triangle', volume: 0.009, filterFrequency: 1900, highpassFrequency: 220, glideTo: 336 });
+  playTone({ frequency: 468, duration: 0.06, wave: 'sine', volume: 0.0045, filterFrequency: 2400, whenOffset: 0.025, highpassFrequency: 300, glideTo: 514 });
+}
+
+export function playMemoryBondSound(variant: MemoryBondSound) {
+  if (variant === 'first') {
+    playTone({ frequency: 286, duration: 0.16, wave: 'sine', volume: 0.011, filterFrequency: 2400, highpassFrequency: 180, glideTo: 330, vibratoRate: 4.2, vibratoDepth: 2.1 });
+    playTone({ frequency: 462, duration: 0.12, wave: 'triangle', volume: 0.006, filterFrequency: 2800, whenOffset: 0.05, highpassFrequency: 260, glideTo: 520 });
+    return;
+  }
+
+  if (variant === 'stable') {
+    playTone({ frequency: 262, duration: 0.18, wave: 'sine', volume: 0.012, filterFrequency: 2300, highpassFrequency: 160, glideTo: 320 });
+    playTone({ frequency: 392, duration: 0.16, wave: 'triangle', volume: 0.0068, filterFrequency: 2600, whenOffset: 0.045, highpassFrequency: 240, glideTo: 466 });
+    playNoiseBurst(0.08, 0.0012, 2800, 1200, 0.02);
+    return;
+  }
+
+  if (variant === 'strained') {
+    playTone({ frequency: 248, duration: 0.18, wave: 'triangle', volume: 0.011, filterFrequency: 1800, highpassFrequency: 140, glideTo: 232, vibratoRate: 6.2, vibratoDepth: 3.8, detune: -4 });
+    playTone({ frequency: 376, duration: 0.12, wave: 'sawtooth', volume: 0.0048, filterFrequency: 1700, whenOffset: 0.03, highpassFrequency: 260, glideTo: 340, detune: 7 });
+    playNoiseBurst(0.09, 0.0018, 2200, 900, 0.03);
+    return;
+  }
+
+  if (variant === 'warm') {
+    playTone({ frequency: 304, duration: 0.17, wave: 'sine', volume: 0.0118, filterFrequency: 2500, highpassFrequency: 180, glideTo: 352, vibratoRate: 4.4, vibratoDepth: 1.8 });
+    playTone({ frequency: 486, duration: 0.14, wave: 'triangle', volume: 0.006, filterFrequency: 3000, whenOffset: 0.06, highpassFrequency: 260, glideTo: 566 });
+    return;
+  }
+
+  playTone({ frequency: 330, duration: 0.22, wave: 'sine', volume: 0.013, filterFrequency: 2600, highpassFrequency: 170, glideTo: 370, vibratoRate: 3.4, vibratoDepth: 1.6 });
+  playTone({ frequency: 510, duration: 0.16, wave: 'triangle', volume: 0.0062, filterFrequency: 2900, whenOffset: 0.08, highpassFrequency: 240, glideTo: 580 });
+  playNoiseBurst(0.12, 0.0014, 3200, 1200, 0.05);
 }
 
 export function playDialogueOpenSound(label: string) {
@@ -333,6 +533,11 @@ export function playDialogueOpenSound(label: string) {
     playTone({ frequency: 312, duration: 0.11, wave: 'sine', volume: 0.018, filterFrequency: 1900, highpassFrequency: 260, glideTo: 360, vibratoRate: 8, vibratoDepth: 5 });
     playTone({ frequency: 468, duration: 0.09, wave: 'triangle', volume: 0.008, filterFrequency: 2300, whenOffset: 0.035, highpassFrequency: 300, glideTo: 560 });
     playNoiseBurst(0.09, 0.0022, 3000, 1200, 0.02);
+    return;
+  }
+  if (speaker === 'Lia') {
+    playTone({ frequency: 274, duration: 0.12, wave: 'triangle', volume: 0.015, filterFrequency: 1900, highpassFrequency: 180, glideTo: 304, vibratoRate: 4.8, vibratoDepth: 2.2 });
+    playTone({ frequency: 420, duration: 0.09, wave: 'sine', volume: 0.0058, filterFrequency: 2600, whenOffset: 0.05, highpassFrequency: 240, glideTo: 470 });
     return;
   }
   if (speaker === 'Ren') {
@@ -359,11 +564,17 @@ export function playDialogueAdvanceSound() {
   playNoiseBurst(0.03, 0.0016, 2400, 900);
 }
 
-export function playDialogueChoiceSound(effect: 'trust' | 'dependency') {
+export function playDialogueChoiceSound(effect: 'trust' | 'dependency' | 'intimacy') {
   if (effect === 'trust') {
     playTone({ frequency: 296, duration: 0.09, wave: 'sine', volume: 0.014, filterFrequency: 1600, highpassFrequency: 220, glideTo: 360 });
     playTone({ frequency: 432, duration: 0.12, wave: 'triangle', volume: 0.01, filterFrequency: 2200, whenOffset: 0.045, highpassFrequency: 280, glideTo: 540, vibratoRate: 5, vibratoDepth: 2 });
     playNoiseBurst(0.07, 0.0018, 2600, 1300, 0.02);
+    return;
+  }
+
+  if (effect === 'intimacy') {
+    playTone({ frequency: 322, duration: 0.08, wave: 'triangle', volume: 0.011, filterFrequency: 2100, highpassFrequency: 240, glideTo: 362 });
+    playTone({ frequency: 504, duration: 0.11, wave: 'sine', volume: 0.007, filterFrequency: 2600, whenOffset: 0.04, highpassFrequency: 300, glideTo: 586 });
     return;
   }
 

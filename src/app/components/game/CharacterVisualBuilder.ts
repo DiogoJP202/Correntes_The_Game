@@ -10,6 +10,8 @@ export interface CharacterMotionState {
   facing: Vec2;
   velocity: Vec2;
   poseVariant?: 'default' | 'seated';
+  storyBeat?: 'memory' | 'present';
+  expression?: 'neutral' | 'soft-smile' | 'serious';
   isAttacking?: boolean;
   attackType?: 'light' | 'heavy' | null;
   attackTimer?: number;
@@ -227,10 +229,12 @@ function drawAmbientAura(
   motion: CharacterMotionState,
 ) {
   const auraStrength = definition.role === 'protagonist'
-    ? 0.3 + (1 - clamp((motion.attackTimer ?? 0) / 30, 0, 1)) * 0.15
+    ? (motion.storyBeat === 'memory' ? 0.08 : 0.3) + (1 - clamp((motion.attackTimer ?? 0) / 30, 0, 1)) * (motion.storyBeat === 'memory' ? 0.05 : 0.15)
     : definition.role === 'companion'
       ? 0.15 + clamp((motion.dependency ?? 0) / 100, 0, 1) * 0.18
-      : 0.16;
+      : definition.role === 'memory-anchor'
+        ? 0.08
+        : 0.16;
 
   ctx.save();
   ctx.shadowColor = definition.palette.glow;
@@ -525,11 +529,15 @@ function drawFace(
     ctx.moveTo(rig.head.x - 4, rig.head.y + 3);
     ctx.lineTo(rig.head.x + 2, rig.head.y + 1 + Math.sin(motion.frame * 0.12) * 0.5);
     ctx.stroke();
-  } else if (definition.role === 'companion') {
-    ctx.strokeStyle = withAlpha('#6c4f5c', 0.55);
+  } else if (definition.role === 'companion' || definition.role === 'memory-anchor') {
+    const smileCurve =
+      motion.expression === 'soft-smile' ? [0.2, 2.95] :
+      motion.expression === 'serious' ? [0.8, 2.35] :
+      [0.42, 2.72];
+    ctx.strokeStyle = withAlpha(definition.role === 'memory-anchor' ? '#8f5f4c' : '#6c4f5c', 0.55);
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.arc(rig.head.x, rig.head.y + 3, 2.2, 0.4, 2.7);
+    ctx.arc(rig.head.x, rig.head.y + 3, 2.2, smileCurve[0], smileCurve[1]);
     ctx.stroke();
   }
   ctx.restore();
@@ -544,13 +552,15 @@ function drawDetails(
   ctx.save();
   if (definition.role === 'protagonist') {
     const pulse = 0.5 + Math.sin(motion.frame * 0.18) * 0.2;
-    ctx.fillStyle = withAlpha(definition.palette.glow, 0.45 + pulse * 0.2);
+    const baseGlow = motion.storyBeat === 'memory' ? 0.12 : 0.45;
+    const handGlow = motion.storyBeat === 'memory' ? 0.08 : 0.28;
+    ctx.fillStyle = withAlpha(definition.palette.glow, baseGlow + pulse * (motion.storyBeat === 'memory' ? 0.06 : 0.2));
     ctx.beginPath();
     ctx.arc(rig.chest.x, rig.chest.y + 1, 2.6, 0, TAU);
     ctx.fill();
 
     for (const hand of rig.hands) {
-      ctx.fillStyle = withAlpha(definition.palette.glow, 0.28 + pulse * 0.18);
+      ctx.fillStyle = withAlpha(definition.palette.glow, handGlow + pulse * (motion.storyBeat === 'memory' ? 0.05 : 0.18));
       ctx.beginPath();
       ctx.arc(hand.x, hand.y, 1.6 + pulse * 0.8, 0, TAU);
       ctx.fill();

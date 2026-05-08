@@ -47,6 +47,20 @@ function getPalette(speaker: string, tone: DialogueVisualTone): PortraitPalette 
     };
   }
 
+  if (speaker === 'Lia') {
+    return {
+      frame: '#f2c28f',
+      bgTop: '#2a1612',
+      bgBottom: '#150d0c',
+      aura: '#ffd29c',
+      skin: '#ecd6c7',
+      hair: '#59413a',
+      coat: '#c98d70',
+      accent: '#ffe1bf',
+      eye: '#fff8f0',
+    };
+  }
+
   if (tone === 'system') {
     return {
       frame: '#91cbff',
@@ -78,6 +92,7 @@ export function DialoguePortrait({ speaker, tone, speaking }: Props) {
   const palette = getPalette(speaker, tone);
   const isAiko = speaker === 'Aiko';
   const isRen = speaker === 'Ren';
+  const isLia = speaker === 'Lia';
   const isNarration = !speaker && tone === 'narration';
   const isSystem = tone === 'system';
 
@@ -135,27 +150,45 @@ export function DialoguePortrait({ speaker, tone, speaking }: Props) {
         ) : (
           <>
             <path
-              d={isRen ? 'M20 96 C22 76, 30 62, 46 58 C63 62, 70 76, 72 96 L60 100 L32 100 Z' : 'M20 98 C23 80, 30 66, 46 61 C61 66, 68 80, 72 98 L58 102 L34 102 Z'}
-              fill={palette.coat}
-              opacity="0.96"
-            />
+                d={
+                  isRen
+                    ? 'M20 96 C22 76, 30 62, 46 58 C63 62, 70 76, 72 96 L60 100 L32 100 Z'
+                    : isLia
+                      ? 'M19 98 C22 82, 30 66, 46 60 C63 66, 69 82, 73 98 L57 102 L34 102 Z'
+                      : 'M20 98 C23 80, 30 66, 46 61 C61 66, 68 80, 72 98 L58 102 L34 102 Z'
+                }
+                fill={palette.coat}
+                opacity="0.96"
+              />
 
-            <path
-              d={isRen ? 'M28 36 C34 24, 59 22, 64 42 C63 53, 58 60, 46 61 C34 60, 28 52, 28 36 Z' : 'M30 38 C34 26, 56 25, 61 40 C61 52, 56 60, 46 61 C35 60, 30 52, 30 38 Z'}
-              fill={palette.skin}
-            />
-
-            <path
-              d={isRen
-                ? 'M25 38 C29 23, 41 18, 56 20 C63 22, 67 28, 66 40 C60 32, 53 30, 48 31 C44 30, 39 33, 33 39 C31 42, 29 45, 27 47 C24 45, 24 41, 25 38 Z'
-                : 'M28 40 C28 28, 39 21, 51 22 C60 23, 65 29, 64 39 C59 34, 54 33, 50 34 C47 34, 43 35, 38 39 C37 43, 36 48, 34 52 C30 49, 28 45, 28 40 Z'}
-              fill={palette.hair}
-              opacity="0.98"
-            />
-
-            {isAiko && (
               <path
-                d="M33 44 C31 49, 30 55, 28 59 C35 58, 39 54, 40 50 Z M52 44 C56 48, 58 54, 60 60 C53 58, 50 53, 49 49 Z"
+                d={
+                  isRen
+                    ? 'M28 36 C34 24, 59 22, 64 42 C63 53, 58 60, 46 61 C34 60, 28 52, 28 36 Z'
+                    : isLia
+                      ? 'M30 37 C34 24, 57 24, 62 39 C62 52, 57 61, 46 62 C35 61, 30 52, 30 37 Z'
+                      : 'M30 38 C34 26, 56 25, 61 40 C61 52, 56 60, 46 61 C35 60, 30 52, 30 38 Z'
+                }
+                fill={palette.skin}
+              />
+
+              <path
+                d={
+                  isRen
+                    ? 'M25 38 C29 23, 41 18, 56 20 C63 22, 67 28, 66 40 C60 32, 53 30, 48 31 C44 30, 39 33, 33 39 C31 42, 29 45, 27 47 C24 45, 24 41, 25 38 Z'
+                    : isLia
+                      ? 'M28 40 C29 28, 39 21, 51 22 C59 23, 64 28, 64 39 C59 34, 54 34, 49 35 C45 34, 40 36, 37 39 C36 44, 36 49, 34 55 C30 51, 28 46, 28 40 Z'
+                      : 'M28 40 C28 28, 39 21, 51 22 C60 23, 65 29, 64 39 C59 34, 54 33, 50 34 C47 34, 43 35, 38 39 C37 43, 36 48, 34 52 C30 49, 28 45, 28 40 Z'
+                }
+                fill={palette.hair}
+                opacity="0.98"
+              />
+
+            {(isAiko || isLia) && (
+              <path
+                d={isLia
+                  ? 'M32 45 C31 50, 30 56, 29 61 C35 60, 39 56, 40 50 Z M52 44 C56 49, 58 54, 59 60 C54 58, 50 54, 49 49 Z'
+                  : 'M33 44 C31 49, 30 55, 28 59 C35 58, 39 54, 40 50 Z M52 44 C56 48, 58 54, 60 60 C53 58, 50 53, 49 49 Z'}
                 fill={palette.hair}
                 opacity="0.88"
               />
@@ -164,7 +197,13 @@ export function DialoguePortrait({ speaker, tone, speaking }: Props) {
             <ellipse cx="40" cy="45" rx="1.1" ry="1.6" fill={palette.eye} />
             <ellipse cx="50" cy="45" rx="1.1" ry="1.6" fill={palette.eye} />
             <path
-              d={isRen ? 'M40 53 C43 55, 48 55, 51 53' : 'M39 53 C42 56, 47 56, 51 53'}
+              d={
+                isRen
+                  ? 'M40 53 C43 55, 48 55, 51 53'
+                  : isLia
+                    ? 'M39 53 C42 57, 48 57, 52 53'
+                    : 'M39 53 C42 56, 47 56, 51 53'
+              }
               fill="none"
               stroke={palette.accent}
               strokeOpacity="0.7"
@@ -173,11 +212,15 @@ export function DialoguePortrait({ speaker, tone, speaking }: Props) {
             />
 
             <path
-              d={isRen
-                ? 'M24 78 C33 70, 60 70, 68 78 L64 96 L28 96 Z'
-                : 'M24 79 C34 72, 58 72, 68 79 L63 96 L29 96 Z'}
+              d={
+                isRen
+                  ? 'M24 78 C33 70, 60 70, 68 78 L64 96 L28 96 Z'
+                  : isLia
+                    ? 'M23 80 C34 73, 58 72, 69 79 L64 97 L28 97 Z'
+                    : 'M24 79 C34 72, 58 72, 68 79 L63 96 L29 96 Z'
+              }
               fill={palette.accent}
-              opacity={isAiko ? 0.14 : 0.12}
+              opacity={isAiko ? 0.14 : isLia ? 0.18 : 0.12}
             />
           </>
         )}

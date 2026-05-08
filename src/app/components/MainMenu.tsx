@@ -204,8 +204,8 @@ export function MainMenu({ onStart }: Props) {
         </button>
 
         <div className="mt-8 text-gray-600 text-[10px] tracking-[0.22em] space-y-1">
-          <div>WASD mover  |  J ataque  |  K pesado  |  Espaco esquiva</div>
-          <div className="text-blue-400/70">Q fio de vinculo  |  E corrente forcada  |  F interagir</div>
+          <div>Cena inicial: WASD mover  |  F observar</div>
+          <div className="text-blue-400/70">Depois: J ataque  |  K pesado  |  Q fio  |  E corrente  |  Espaco esquiva</div>
         </div>
 
         <div

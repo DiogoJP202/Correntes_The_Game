@@ -8,44 +8,83 @@ export function drawRopeVisual(
   frame: number,
 ) {
   const alpha = effect.timer / effect.maxTimer;
+  const style = effect.style ?? 'combat-bond';
+  const memory = style !== 'combat-bond';
   const points = buildArcPoints(
     { x: effect.fromX, y: effect.fromY },
     { x: effect.toX, y: effect.toY },
-    20,
-    0.25,
+    memory ? 24 : 20,
+    memory ? 0.34 : 0.25,
     frame,
-    8,
+    memory ? 4.5 : 8,
   );
+
+  const palette =
+    style === 'memory-bond-strained'
+      ? {
+          outer: `rgba(120, 98, 140, ${alpha * 0.1})`,
+          mid: `rgba(181, 148, 255, ${alpha * 0.32})`,
+          core: `rgba(255, 230, 244, ${alpha * 0.58})`,
+          pulseA: '#e2c8ff',
+          pulseB: '#fff6fd',
+        }
+      : style === 'memory-bond-warm' || style === 'memory-bond-final'
+        ? {
+            outer: `rgba(173, 116, 84, ${alpha * 0.12})`,
+            mid: `rgba(255, 194, 126, ${alpha * 0.34})`,
+            core: `rgba(255, 246, 228, ${alpha * 0.66})`,
+            pulseA: '#ffd2a2',
+            pulseB: '#fff4d6',
+          }
+        : style === 'memory-bond' || style === 'memory-bond-stable'
+          ? {
+              outer: `rgba(138, 118, 182, ${alpha * 0.09})`,
+              mid: `rgba(220, 205, 255, ${alpha * 0.28})`,
+              core: `rgba(255, 251, 244, ${alpha * 0.62})`,
+              pulseA: '#e6d3ff',
+              pulseB: '#fff8ef',
+            }
+          : {
+              outer: `rgba(61, 118, 164, ${alpha * 0.16})`,
+              mid: `rgba(94, 184, 255, ${alpha * 0.46})`,
+              core: `rgba(197, 238, 255, ${alpha * 0.62})`,
+              pulseA: '#70d7ff',
+              pulseB: '#f4fdff',
+            };
 
   ctx.save();
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
-  strokePath(ctx, points, 9.5, `rgba(61, 118, 164, ${alpha * 0.16})`);
-  strokePath(ctx, points, 6.1, `rgba(94, 184, 255, ${alpha * 0.46})`);
-  strokePath(ctx, points, 4.1, `rgba(197, 238, 255, ${alpha * 0.62})`);
-  strokePath(ctx, points, 1.6, `rgba(246, 252, 255, ${alpha * 0.82})`);
+  strokePath(ctx, points, memory ? 6.8 : 9.5, palette.outer);
+  strokePath(ctx, points, memory ? 4 : 6.1, palette.mid);
+  strokePath(ctx, points, memory ? 2.5 : 4.1, palette.core);
+  strokePath(ctx, points, memory ? 1.05 : 1.6, `rgba(255,255,255,${memory ? alpha * 0.72 : alpha * 0.82})`);
 
   for (let i = 1; i < points.length - 1; i++) {
     const normal = getNormal(points[i - 1], points[i + 1]);
-    const weaveSize = 1.7 + Math.sin(frame * 0.18 + i * 0.9) * 0.35;
-    ctx.strokeStyle = `rgba(222, 247, 255, ${alpha * 0.4})`;
-    ctx.lineWidth = 0.9;
+    const weaveSize = (memory ? 1.15 : 1.7) + Math.sin(frame * 0.18 + i * 0.9) * (memory ? 0.22 : 0.35);
+    ctx.strokeStyle = memory
+      ? `rgba(255, 244, 228, ${alpha * 0.22})`
+      : `rgba(222, 247, 255, ${alpha * 0.4})`;
+    ctx.lineWidth = memory ? 0.65 : 0.9;
     ctx.beginPath();
     ctx.moveTo(points[i].x - normal.x * weaveSize, points[i].y - normal.y * weaveSize);
     ctx.lineTo(points[i].x + normal.x * weaveSize, points[i].y + normal.y * weaveSize);
     ctx.stroke();
   }
 
-  for (let i = 2; i < points.length - 1; i += 2) {
-    ctx.fillStyle = `rgba(130, 224, 255, ${alpha * 0.28})`;
+  for (let i = 2; i < points.length - 1; i += memory ? 3 : 2) {
+    ctx.fillStyle = memory
+      ? `rgba(255, 232, 194, ${alpha * 0.18})`
+      : `rgba(130, 224, 255, ${alpha * 0.28})`;
     ctx.beginPath();
-    ctx.arc(points[i].x, points[i].y, 1.2 + Math.sin(frame * 0.25 + i) * 0.22, 0, TAU);
+    ctx.arc(points[i].x, points[i].y, (memory ? 0.9 : 1.2) + Math.sin(frame * 0.25 + i) * 0.22, 0, TAU);
     ctx.fill();
   }
 
-  drawPulse(ctx, points[0], '#70d7ff', alpha * 0.5, 13);
-  drawPulse(ctx, points[points.length - 1], '#f4fdff', alpha * 0.72, 10);
+  drawPulse(ctx, points[0], palette.pulseA, alpha * (memory ? 0.32 : 0.5), memory ? 9 : 13);
+  drawPulse(ctx, points[points.length - 1], palette.pulseB, alpha * (memory ? 0.46 : 0.72), memory ? 8 : 10);
   ctx.restore();
 }
 
