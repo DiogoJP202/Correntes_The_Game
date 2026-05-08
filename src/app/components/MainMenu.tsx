@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { playDialogueAdvanceSound, primeDialogueAudio } from './game/DialogueAudio';
 
 interface Props {
   onStart: () => void;
@@ -183,7 +184,10 @@ export function MainMenu({ onStart }: Props) {
         </p>
 
         <button
-          onClick={onStart}
+          onClick={() => {
+            void primeDialogueAudio().then(() => playDialogueAdvanceSound());
+            onStart();
+          }}
           className="group relative px-10 py-4 border border-blue-700/60 text-blue-100 tracking-[0.3em] text-sm hover:border-blue-400/80 hover:text-white transition-all duration-300 uppercase"
           style={{
             background: 'rgba(10, 22, 56, 0.42)',

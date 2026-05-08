@@ -12,7 +12,8 @@ export function getDialogueVisualTone(line: DialogueLine): DialogueVisualTone {
 export function getDialogueSpeakerGlyph(speaker: string) {
   if (speaker === 'Ren') return 'R';
   if (speaker === 'Aiko') return 'A';
-  return 'E';
+  if (!speaker) return 'N';
+  return 'S';
 }
 
 export function getChoiceToneLabel(choice: DialogueChoice) {

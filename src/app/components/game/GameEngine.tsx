@@ -19,6 +19,14 @@ import {
   getDialogueSpeakerGlyph,
   getDialogueVisualTone,
 } from './DialogueUIAnimator';
+import {
+  playDialogueAdvanceSound,
+  playDialogueBlip,
+  playDialogueChoiceSound,
+  playDialogueOpenSound,
+  primeDialogueAudio,
+} from './DialogueAudio';
+import { DialoguePortrait } from './DialoguePortrait';
 
 interface Props {
   onGameEnd: (result: GameResult) => void;
@@ -123,6 +131,7 @@ export function GameEngine({ onGameEnd }: Props) {
     const gs = gsRef.current;
     if (!gs.dialogueActive || gs.awaitingChoice) return;
 
+    playDialogueAdvanceSound();
     dialogueKeyBlockRef.current = true;
     setTimeout(() => {
       dialogueKeyBlockRef.current = false;
@@ -134,6 +143,7 @@ export function GameEngine({ onGameEnd }: Props) {
 
   const handleChoice = useCallback((effect: 'trust' | 'dependency') => {
     const gs = gsRef.current;
+    playDialogueChoiceSound(effect);
     makeChoice(gs, effect, (p) => onPhaseChangeRef.current?.(p));
     syncUI(gs);
   }, [syncUI]);
@@ -199,6 +209,7 @@ export function GameEngine({ onGameEnd }: Props) {
       }
 
       keysRef.current.add(key);
+      void primeDialogueAudio();
 
       if (gs.phase === 'INTRO' && introReady) {
         gs.introTimer = 999;
@@ -473,12 +484,14 @@ function DialogueBox({
   const tone = getDialogueVisualTone(line);
   const isNarration = tone === 'narration';
   const isSystem = tone === 'system';
+  const portraitSpeaker = line.speaker || (isSystem ? 'Sistema' : 'Narracao');
   const badgeColor =
     tone === 'aiko' ? 'border-rose-400/40 text-rose-200' :
     tone === 'ren' ? 'border-blue-400/40 text-blue-200' :
     'border-amber-200/30 text-amber-100/80';
 
   useEffect(() => {
+    playDialogueOpenSound(line.speaker);
     if (awaitingChoice) {
       setTypedText(line.text);
       return;
@@ -488,7 +501,12 @@ function DialogueBox({
     setTypedText('');
     const interval = setInterval(() => {
       i++;
-      setTypedText(line.text.slice(0, i));
+      const nextText = line.text.slice(0, i);
+      const latestChar = line.text.charAt(Math.max(0, i - 1));
+      setTypedText(nextText);
+      if (latestChar && /\S/.test(latestChar) && i % (isNarration ? 4 : 2) === 0) {
+        playDialogueBlip(line.speaker);
+      }
       if (i >= line.text.length) {
         clearInterval(interval);
       }
@@ -512,16 +530,24 @@ function DialogueBox({
         }}
       >
         <div className="flex items-start gap-4">
-          <div className={`w-10 h-10 flex items-center justify-center border ${badgeColor}`} style={{ background: 'rgba(255,255,255,0.03)' }}>
-            <span className="text-sm tracking-[0.18em]">{getDialogueSpeakerGlyph(line.speaker)}</span>
+          <div className="flex flex-col items-center gap-2 shrink-0">
+            <DialoguePortrait
+              speaker={line.speaker}
+              tone={tone}
+              speaking={!awaitingChoice && typedText.length < line.text.length}
+            />
+            <div className={`w-10 h-10 flex items-center justify-center border ${badgeColor}`} style={{ background: 'rgba(255,255,255,0.03)' }}>
+              <span className="text-sm tracking-[0.18em]">{getDialogueSpeakerGlyph(line.speaker)}</span>
+            </div>
           </div>
 
           <div className="flex-1">
-            {line.speaker && (
-              <div className={`text-[10px] tracking-[0.35em] mb-2 ${tone === 'aiko' ? 'text-rose-200' : tone === 'ren' ? 'text-blue-200' : 'text-amber-100/80'}`}>
-                {line.speaker.toUpperCase()}
-              </div>
-            )}
+            <div className={`text-[10px] tracking-[0.35em] mb-1 ${tone === 'aiko' ? 'text-rose-200' : tone === 'ren' ? 'text-blue-200' : 'text-amber-100/80'}`}>
+              {portraitSpeaker.toUpperCase()}
+            </div>
+            <div className="text-[9px] text-slate-500 tracking-[0.2em] mb-3">
+              {tone === 'aiko' ? 'presenca fragil' : tone === 'ren' ? 'voz contida' : isSystem ? 'eco do sistema' : 'narracao interna'}
+            </div>
 
             {!awaitingChoice && (
               <div
