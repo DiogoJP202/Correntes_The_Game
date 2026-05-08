@@ -10,10 +10,26 @@ export type GamePhase =
 export type AikoStateType = 'scared' | 'dependent' | 'unstable' | 'conscious';
 export type EnemyType = 'common' | 'heavy';
 export type EnemyAIState = 'patrol' | 'chase' | 'attack' | 'stunned' | 'dead';
+export type ParticleType = 'rain' | 'hit' | 'aura' | 'spark' | 'dust' | 'ring' | 'mist' | 'stability';
+export type ChoiceTone = 'trust' | 'dependency' | null;
 
 export interface Vec2 {
   x: number;
   y: number;
+}
+
+export interface CameraState {
+  x: number;
+  y: number;
+  zoom: number;
+  targetX: number;
+  targetY: number;
+  targetZoom: number;
+  shake: number;
+  shakeX: number;
+  shakeY: number;
+  bars: number;
+  focusMix: number;
 }
 
 export interface Player {
@@ -43,6 +59,9 @@ export interface Player {
   forcedChainCount: number;
   hitFlash: number;
   eloRegenTimer: number;
+  castTimer: number;
+  castType: 'bond' | 'forced' | null;
+  moveTilt: number;
 }
 
 export interface Aiko {
@@ -71,6 +90,7 @@ export interface Enemy {
   damage: number;
   attackRange: number;
   attackCooldown: number;
+  attackTelegraph: number;
   stunTimer: number;
   slowTimer: number;
   aiState: EnemyAIState;
@@ -86,9 +106,12 @@ export interface Particle {
   vy: number;
   life: number;
   maxLife: number;
-  type: 'rain' | 'hit' | 'aura' | 'spark' | 'dust';
+  type: ParticleType;
   color: string;
   size: number;
+  rotation?: number;
+  elongation?: number;
+  glow?: number;
 }
 
 export interface ChainEffect {
@@ -121,11 +144,14 @@ export interface GameState {
   enemies: Enemy[];
   particles: Particle[];
   chainEffects: ChainEffect[];
+  camera: CameraState;
   dialogueActive: boolean;
   dialogueQueue: DialogueLine[];
   dialogueIndex: number;
   awaitingChoice: boolean;
   chosenPath: 'trust' | 'dependency' | null;
+  choiceFlash: number;
+  choiceTone: ChoiceTone;
   combatWave: number;
   waveTransitionTimer: number;
   nearAiko: boolean;
@@ -159,6 +185,7 @@ export interface UIState {
   aikoDependency: number;
   aikoTrust: number;
   aikoAutonomy: number;
+  forcedChainCount: number;
   nearAiko: boolean;
   hintText: string;
   dialogueActive: boolean;
@@ -167,4 +194,6 @@ export interface UIState {
   aikoPhrase: string | null;
   introVisible: boolean;
   combatWave: number;
+  lowStability: boolean;
+  choiceTone: ChoiceTone;
 }

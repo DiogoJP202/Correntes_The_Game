@@ -1,5 +1,6 @@
 import type { AikoStateType, EnemyAIState, Vec2 } from './types';
 import type { CharacterDefinition } from './characterDefinitions';
+import { getProceduralMotionProfile } from './ProceduralCharacterAnimator';
 
 const TAU = Math.PI * 2;
 const SCREEN_UP: Vec2 = { x: 0, y: -1 };
@@ -14,6 +15,7 @@ export interface CharacterMotionState {
   attackTimer?: number;
   isDodging?: boolean;
   hitFlash?: number;
+  castType?: 'bond' | 'forced' | null;
   dependency?: number;
   autonomy?: number;
   aikoState?: AikoStateType;
@@ -58,8 +60,8 @@ export function buildCharacterRig(
   const dodgeLean = motion.isDodging ? 0.75 : 0;
   const seed = motion.seed ?? 0;
   const cycle = motion.frame * (0.11 + travel * 0.12) + seed * 0.6;
-  const mood = getStateOffsets(definition, motion);
-  const bounce = Math.sin(cycle * 2) * (0.7 + travel * 1.2) + mood.jitter;
+  const profile = getProceduralMotionProfile(definition, motion);
+  const bounce = Math.sin(cycle * 2) * (0.7 + travel * 1.2) + profile.jitter + profile.breath;
   const torsoHeight = definition.silhouette.torsoHeight * definition.silhouette.scale;
   const legLength = definition.silhouette.legLength * definition.silhouette.scale;
   const armLength = definition.silhouette.armLength * definition.silhouette.scale;
@@ -67,16 +69,16 @@ export function buildCharacterRig(
   const hipWidth = definition.silhouette.hipWidth * definition.silhouette.scale;
   const stance = definition.silhouette.stanceWidth * definition.silhouette.scale;
   const seated = motion.poseVariant === 'seated';
-  const baseHunch = definition.silhouette.hunch + mood.hunch + attackLean * 0.05;
-  const lean = mood.forwardLean + attackLean + dodgeLean;
+  const baseHunch = definition.silhouette.hunch + profile.hunch + attackLean * 0.05;
+  const lean = profile.forwardLean + attackLean + dodgeLean;
   const headLift = torsoHeight * (seated ? 0.56 : 0.68);
   const footLift = seated ? 0.5 : 1.4 + travel * 1.8;
-  const stride = 4 + travel * 6 + mood.strideBoost;
+  const stride = 4 + travel * 6 + profile.strideBoost;
   const leftStep = Math.sin(cycle) * stride;
   const rightStep = Math.sin(cycle + Math.PI) * stride;
   const armSwing = Math.sin(cycle + Math.PI * 0.5) * (2 + travel * 4);
-  const jitterX = mood.jitter * Math.sin(motion.frame * 0.73 + seed * 1.2);
-  const jitterY = mood.jitter * Math.cos(motion.frame * 0.81 + seed * 1.1);
+  const jitterX = profile.jitter * Math.sin(motion.frame * 0.73 + seed * 1.2);
+  const jitterY = profile.jitter * Math.cos(motion.frame * 0.81 + seed * 1.1);
   const rootWithJitter = add(root, { x: jitterX, y: jitterY });
 
   const hip = add(
@@ -89,11 +91,17 @@ export function buildCharacterRig(
   const chest = add(
     hip,
     add(
-      scale(SCREEN_UP, torsoHeight * (seated ? 0.68 : 0.85)),
-      add(scale(forward, lean * 4), scale(side, mood.sideLean)),
+      scale(SCREEN_UP, torsoHeight * (seated ? 0.68 : 0.85) + profile.breath * 0.4),
+      add(scale(forward, lean * 4), scale(side, profile.sideLean + profile.headTilt * 6)),
     ),
   );
-  const head = add(chest, add(scale(SCREEN_UP, headLift), scale(forward, -baseHunch * 2.4)));
+  const head = add(
+    chest,
+    add(
+      scale(SCREEN_UP, headLift + profile.breath * 0.55),
+      add(scale(forward, -baseHunch * 2.4 + profile.headTilt * 4), scale(side, profile.headTilt * 8)),
+    ),
+  );
 
   const shoulders: [Vec2, Vec2] = [
     add(chest, add(scale(side, -shoulderWidth * 0.5), scale(forward, -1.2))),
@@ -112,15 +120,15 @@ export function buildCharacterRig(
     add(
       shoulders[0],
       add(
-        scale(side, -2 - mood.armGuard),
-        add(scale(forward, armSwing * 0.6 - mood.armCross), scale(SCREEN_UP, armLength * 0.55)),
+        scale(side, -2 - profile.armGuard),
+        add(scale(forward, armSwing * 0.6 - profile.armCross), scale(SCREEN_UP, armLength * 0.55)),
       ),
     ),
     add(
       shoulders[1],
       add(
-        scale(side, 2 + mood.armGuard),
-        add(scale(forward, -armSwing * 0.6 + mood.armCross + attackReach), scale(SCREEN_UP, armLength * 0.55)),
+        scale(side, 2 + profile.armGuard),
+        add(scale(forward, -armSwing * 0.6 + profile.armCross + attackReach), scale(SCREEN_UP, armLength * 0.55)),
       ),
     ),
   ];
@@ -607,71 +615,6 @@ function drawFoot(ctx: CanvasRenderingContext2D, foot: Vec2, forward: Vec2, size
   ctx.lineTo(foot.x + forward.x * size * 0.9 - side.x * size * 0.3, foot.y + forward.y * size * 0.9 - side.y * size * 0.3);
   ctx.closePath();
   ctx.fill();
-}
-
-function getStateOffsets(definition: CharacterDefinition, motion: CharacterMotionState) {
-  let hunch = 0;
-  let forwardLean = 0;
-  let sideLean = 0;
-  let armGuard = 0;
-  let armCross = 0;
-  let strideBoost = 0;
-  let jitter = 0;
-
-  if (definition.role === 'protagonist') {
-    hunch += 0.03;
-    forwardLean += 0.08;
-    armGuard += 1.8;
-  }
-
-  if (definition.role === 'companion') {
-    if (motion.aikoState === 'scared') {
-      hunch += 0.12;
-      armGuard += 4;
-      armCross += 4;
-      forwardLean -= 0.12;
-    } else if (motion.aikoState === 'dependent') {
-      hunch += 0.06;
-      forwardLean += 0.1;
-      armGuard += 2;
-      strideBoost += 2;
-    } else if (motion.aikoState === 'unstable') {
-      hunch += 0.09;
-      jitter += 1.1;
-      armCross += 2;
-    } else if (motion.aikoState === 'conscious') {
-      hunch -= 0.08;
-      forwardLean += 0.04;
-    }
-
-    if (motion.poseVariant === 'seated') {
-      hunch += 0.16;
-      armGuard += 3;
-      armCross += 3;
-      strideBoost -= 2;
-    }
-  }
-
-  if (definition.role === 'enemy') {
-    if (definition.characterName === 'Caido Comum') {
-      hunch += 0.14;
-      strideBoost += 2.6;
-      armGuard -= 1.5;
-      sideLean += Math.sin(motion.frame * 0.07 + (motion.seed ?? 0)) * 1.1;
-    } else {
-      hunch += 0.08;
-      forwardLean += 0.06;
-      strideBoost += 1.4;
-      jitter += motion.enemyState === 'stunned' ? 0.8 : 0.1;
-    }
-  }
-
-  if (motion.enemyState === 'stunned') {
-    jitter += 1.4;
-    forwardLean -= 0.22;
-  }
-
-  return { hunch, forwardLean, sideLean, armGuard, armCross, strideBoost, jitter };
 }
 
 function add(a: Vec2, b: Vec2): Vec2 {
